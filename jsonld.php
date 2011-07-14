@@ -17,12 +17,6 @@ define('JSONLD_XSD_DOUBLE', JSONLD_XSD . 'double');
 define('JSONLD_XSD_INTEGER', JSONLD_XSD . 'integer');
 define('JSONLD_XSD_ANY_URI', JSONLD_XSD . 'anyURI');
 
-// FIXME: remove me
-function _log($value)
-{
-   return print_r(str_replace('\\/', '/', json_encode($value)), true);
-}
-
 /**
  * Creates the JSON-LD default context.
  *
