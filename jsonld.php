@@ -912,13 +912,14 @@ function _expand($ctx, $property, $value, $expandSubjects)
       $coerce = _getCoerceType($ctx, $property, null);
 
       // automatic coercion for basic JSON types
-      if($coerce === null and (is_numeric($value) or is_bool($value)))
+      if($coerce === null and !is_string($value) &&
+         (is_numeric($value) or is_bool($value)))
       {
          if(is_bool($value))
          {
             $coerce = JSONLD_XSD_BOOLEAN;
          }
-         else if(strpos('' . $value, '.') === false)
+         else if(is_int($value))
          {
             $coerce = JSONLD_XSD_INTEGER;
          }
@@ -1873,15 +1874,15 @@ class JsonLdProcessor
    /**
     * Serializes the properties of the given bnode for its relation
     * serialization.
-    * 
+    *
     * @param b the blank node.
-    * 
+    *
     * @return the serialized properties.
     */
    public function serializeProperties($b)
    {
       $rval = '';
-      
+
       foreach($b as $p => $o)
       {
          if($p !== '@subject')
@@ -1910,7 +1911,7 @@ class JsonLdProcessor
             }
          }
       }
-      
+
       return $rval;
    }
 
@@ -1932,7 +1933,7 @@ class JsonLdProcessor
          {
             break;
          }
-   
+
          if(isset($done->$k))
          {
             // mark cycle
@@ -1949,12 +1950,12 @@ class JsonLdProcessor
                if(isset($this->subjects->$iri))
                {
                   $b = $this->subjects->$iri;
-                  
+
                   // serialize properties
                   $rval .= '<';
                   $rval .= $this->serializeProperties($b);
                   $rval .= '>';
-                  
+
                   // serialize references
                   $rval .= '<';
                   $first = true;
@@ -1974,7 +1975,7 @@ class JsonLdProcessor
                   $rval .= '>';
                }
             }
-            
+
             $rval .= $this->recursiveSerializeMapping($tmp->k, $output, $done);
          }
       }
