@@ -912,7 +912,7 @@ function _expand($ctx, $property, $value, $expandSubjects)
       $coerce = _getCoerceType($ctx, $property, null);
 
       // automatic coercion for basic JSON types
-      if($coerce === null and !is_string($value) &&
+      if($coerce === null and !is_string($value) and
          (is_numeric($value) or is_bool($value)))
       {
          if(is_bool($value))
@@ -1019,8 +1019,8 @@ function _compare($v1, $v2)
 
 /**
  * Compares two keys in an object. If the key exists in one object
- * and not the other, that object is less. If the key exists in both objects,
- * then the one with the lesser value is less.
+ * and not the other, the object with the key is less. If the key exists in
+ * both objects, then the one with the lesser value is less.
  *
  * @param o1 the first object.
  * @param o2 the second object.
@@ -1297,16 +1297,6 @@ function _flatten($parent, $parentProperty, $value, $subjects)
       foreach($value as $v)
       {
          _flatten($parent, $parentProperty, $v, $subjects);
-      }
-
-      // if value is a list of objects, sort them
-      if(count($value) > 0 and
-         (is_string($value[0]) or
-         (is_object($value[0]) and
-         (isset($value[0]->{'@literal'}) or isset($value[0]->{'@iri'})))))
-      {
-         // sort values
-         usort($value, '_compareObjects');
       }
    }
    else if(is_object($value))
@@ -1899,7 +1889,7 @@ class JsonLdProcessor
                {
                   $rval .= '|';
                }
-               if(is_object($obj) and isset($obj->{'@iri'}) &&
+               if(is_object($obj) and isset($obj->{'@iri'}) and
                   _isBlankNodeIri($obj->{'@iri'}))
                {
                   $rval .= '_:';
@@ -2425,6 +2415,18 @@ function _isType($input, $frame)
 }
 
 /**
+ * Filters non-keywords.
+ *
+ * @param e the element to check.
+ *
+ * @return true if the element is a non-keyword.
+ */
+function _filterNonKeyWords($e)
+{
+   return strpos($e, '@') !== 0;
+}
+
+/**
  * Returns true if the given input matches the given frame via duck-typing.
  *
  * @param input the input.
@@ -2440,7 +2442,7 @@ function _isDuckType($input, $frame)
    if(!isset($frame->{JSONLD_RDF_TYPE}))
    {
       // get frame properties that must exist on input
-      $props = array_keys((array)$frame);
+      $props = array_filter(array_keys((array)$frame), '_filterNonKeywords');
       if(count($props) === 0)
       {
          // input always matches if there are no properties
@@ -2485,6 +2487,10 @@ function _frame($subjects, $input, $frame, $embeds, $options)
    {
       $rval = array();
       $frames = $frame;
+      if(count($frames) == 0)
+      {
+         $frames[] = new stdClass();
+      }
    }
    else
    {
@@ -2510,10 +2516,18 @@ function _frame($subjects, $input, $frame, $embeds, $options)
       $v = array();
       for($n = 0; $n < $inLen and $limit !== 0; ++$n)
       {
-         // add input to list if it matches frame specific type or duck-type
-         if(_isType($input[$n], $frame) or _isDuckType($input[$n], $frame))
+         // dereference input if it refers to a subject
+         $next = $input[$n];
+         if(is_object($next) and isset($next->{'@iri'}) and
+            isset($subjects->{$next->{'@iri'}}))
          {
-            $v[] = $input[$n];
+            $next = $subjects->{$next->{'@iri'}};
+         }
+
+         // add input to list if it matches frame specific type or duck-type
+         if(_isType($next, $frame) or _isDuckType($next, $frame))
+         {
+            $v[] = $next;
             --$limit;
          }
       }

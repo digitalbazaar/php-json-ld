@@ -8,19 +8,27 @@
  */
 require_once('jsonld.php');
 
+// determine EOL for output based on command line php or webpage php
+$isCli = defined('STDIN');
+$eol = $isCli ? "\n" : '</br>';
+
 function error_handler($errno, $errstr, $errfile, $errline)
 {
-   echo "</br>$errstr</br>";
+   global $eol;
+   echo "$eol$errstr$eol";
    array_walk(
       debug_backtrace(),
       create_function(
          '$a,$b',
          'echo "{$a[\'function\']}()' .
-         '(".basename($a[\'file\']).":{$a[\'line\']}); </br>";'));
+         '(".basename($a[\'file\']).":{$a[\'line\']}); ' . $eol . '";'));
    throw new Exception();
    return false;
 }
-set_error_handler('error_handler');
+if(!$isCli)
+{
+   set_error_handler('error_handler');
+}
 
 function _sortKeys($obj)
 {
@@ -78,6 +86,7 @@ function _stringifySorted($obj, $indent)
 function _readTestJson($file, $filepath)
 {
    $rval;
+   global $eol;
 
    try
    {
@@ -86,7 +95,7 @@ function _readTestJson($file, $filepath)
    }
    catch(Exception $e)
    {
-      echo "Exception while parsing file: '$file'</br>";
+      echo "Exception while parsing file: '$file'$eol";
       throw $e;
    }
 
@@ -144,6 +153,8 @@ class TestRunner
 
    public function check($expect, $result, $indent=false)
    {
+      global $eol;
+
       // sort and use given indent level
       $expect = _stringifySorted($expect, $indent);
       $result = _stringifySorted($result, $indent);
@@ -159,18 +170,18 @@ class TestRunner
          $fail = true;
       }
 
-      echo $line . '</br>';
+      echo "$line$eol";
       if($fail)
       {
-         echo 'Expect: ' . print_r($expect, true) . '</br>';
-         echo 'Result: ' . print_r($result, true) . '</br>';
+         echo 'Expect: ' . print_r($expect, true) . $eol;
+         echo 'Result: ' . print_r($result, true) . $eol;
 
          /*
          $flags = JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT;
          echo 'Legible Expect: ' .
-            json_encode(json_decode(expect, $flags)) . '</br>';
+            json_encode(json_decode(expect, $flags)) . $eol;
          echo 'Legible Result: ' .
-            json_encode(json_decode(result, $flags)) . '</br>';
+            json_encode(json_decode(result, $flags)) . $eol;
          */
 
          // FIXME: remove me
@@ -180,11 +191,12 @@ class TestRunner
 
    public function load($filepath)
    {
+      global $eol;
       $tests = array();
 
       // get full path
       $filepath = realpath($filepath);
-      echo "Reading test files from: '$filepath'</br>";
+      echo "Reading test files from: '$filepath'$eol";
 
       // read each test file from the directory
       $files = array();
@@ -210,7 +222,7 @@ class TestRunner
          $info = pathinfo($file);
          if($info['extension'] == 'test')
          {
-            echo "Reading test file: '$file'</br>";
+            echo "Reading test file: '$file'$eol";
 
             try
             {
@@ -218,7 +230,7 @@ class TestRunner
             }
             catch(Exception $e)
             {
-               echo "Exception while parsing file: '$file'</br>";
+               echo "Exception while parsing file: '$file'$eol";
                throw $e;
             }
 
@@ -230,7 +242,7 @@ class TestRunner
          }
       }
 
-      echo count($tests) . ' test file(s) read.</br>';
+      echo count($tests) . " test file(s) read.$eol";
 
       return $tests;
    }
@@ -324,6 +336,6 @@ $tr = new TestRunner();
 $tr->group('JSON-LD');
 $tr->run($tr->load('tests'));
 $tr->ungroup();
-echo 'All tests complete.</br>';
+echo "All tests complete.$eol";
 
 ?>
