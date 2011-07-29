@@ -1314,7 +1314,11 @@ function _flatten($parent, $parentProperty, $value, $subjects)
 {
    $flattened = null;
 
-   if(is_array($value))
+   if($value === null)
+   {
+      // drop null values
+   }
+   else if(is_array($value))
    {
       // list of objects or a disjoint graph
       foreach($value as $v)
