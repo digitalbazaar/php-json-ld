@@ -690,7 +690,9 @@ function _compact($ctx, $property, $value, $usedCtx)
 
    if($value === null)
    {
+      // return null, but check coerce type to add to usedCtx
       $rval = null;
+      _getCoerceType($ctx, $property, $usedCtx);
    }
    else if(is_array($value))
    {
@@ -721,10 +723,13 @@ function _compact($ctx, $property, $value, $usedCtx)
       {
          if($v !== '@context')
          {
-            // set object to compacted property
-            _setProperty(
-               $rval, _compactIri($ctx, $key, $usedCtx),
-               _compact($ctx, $key, $v, $usedCtx));
+            // set object to compacted property, only overwrite existing
+            // properties if the property actually compacted
+            $p = _compactIri($ctx, $key, $usedCtx);
+            if($p !== $key or !property_exists($rval, $p))
+            {
+               $rval->$p = _compact($ctx, $key, $v, $usedCtx);
+            }
          }
       }
    }
