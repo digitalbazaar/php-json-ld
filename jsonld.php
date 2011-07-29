@@ -182,11 +182,15 @@ function jsonld_merge_contexts($ctx1, $ctx2)
    }
 
    // @coerce must be specially-merged, remove from contexts
-   $coerceExists = isset($merged->{'@coerce'}) or isset($copy->{'@coerce'});
+   $coerceExists =
+      property_exists($merged, '@coerce') or
+      property_exists($copy, '@coerce');
    if($coerceExists)
    {
-      $c1 = isset($merged->{'@coerce'}) ? $merged->{'@coerce'} : new stdClass();
-      $c2 = isset($copy->{'@coerce'}) ? $copy->{'@coerce'} : new stdClass();
+      $c1 = property_exists($merged, '@coerce') ?
+         $merged->{'@coerce'} : new stdClass();
+      $c2 = property_exists($copy, '@coerce') ?
+         $copy->{'@coerce'} : new stdClass();
       unset($merged->{'@coerce'});
       unset($copy->{'@coerce'});
    }
@@ -203,7 +207,7 @@ function jsonld_merge_contexts($ctx1, $ctx2)
       foreach($c1 as $type => $p1)
       {
          // append existing-type properties that don't already exist
-         if(isset($c2->$type))
+         if(property_exists($c2, $type))
          {
             $p2 = $c2->$type;
 
@@ -237,7 +241,7 @@ function jsonld_merge_contexts($ctx1, $ctx2)
       // add new types from new @coerce
       foreach($c2 as $type => $value)
       {
-         if(!isset($c1->$type))
+         if(!property_exists($c1, $type))
          {
             $c1->$type = $value;
          }
@@ -254,7 +258,7 @@ function jsonld_merge_contexts($ctx1, $ctx2)
          }
          foreach($p as $v)
          {
-            if(!isset($unique->$v))
+            if(!property_exists($unique, $v))
             {
                $unique->$v = true;
             }
@@ -327,7 +331,7 @@ function jsonld_frame($input, $frame, $options=null)
 
    // save frame context
    $ctx = null;
-   if(isset($frame->{'@context'}))
+   if(property_exists($frame, '@context'))
    {
       $ctx = jsonld_merge_contexts(
          jsonld_create_default_context(), $frame->{'@context'});
@@ -342,6 +346,7 @@ function jsonld_frame($input, $frame, $options=null)
    $options->defaults = new stdClass();
    $options->defaults->embedOn = true;
    $options->defaults->explicitOn = false;
+   $options->defaults->omitDefaultOn = false;
 
    // build map of all subjects
    $subjects = new stdClass();
@@ -461,7 +466,7 @@ function _expandTerm($ctx, $term, $usedCtx)
       $prefix = substr($term, 0, $idx);
 
       // 1.1. See if the prefix is in the context:
-      if(isset($ctx->$prefix))
+      if(property_exists($ctx, $prefix))
       {
          // prefix found, expand property to absolute IRI
          $rval = $ctx->$prefix . substr($term, $idx + 1);
@@ -477,7 +482,7 @@ function _expandTerm($ctx, $term, $usedCtx)
       }
    }
    // 2. If the property is in the context, then it's a term.
-   else if(isset($ctx->$term))
+   else if(property_exists($ctx, $term))
    {
       $rval = $ctx->$term;
       if($usedCtx !== null)
@@ -518,7 +523,7 @@ function _expandTerm($ctx, $term, $usedCtx)
  */
 function _setProperty($s, $p, $o)
 {
-   if(isset($s->$p))
+   if(property_exists($s, $p))
    {
       if(is_array($s->$p))
       {
@@ -640,12 +645,12 @@ function _getCoerceType($ctx, $property, $usedCtx)
                $rval = _expandTerm($ctx, $type, $usedCtx);
                if($usedCtx !== null)
                {
-                  if(!isset($usedCtx->{'@coerce'}))
+                  if(!property_exists($usedCtx, '@coerce'))
                   {
                      $usedCtx->{'@coerce'} = new stdClass();
                   }
 
-                  if(!isset($usedCtx->{'@coerce'}->$type))
+                  if(!property_exists($usedCtx->{'@coerce'}, $type))
                   {
                      $usedCtx->{'@coerce'}->$type = $p;
                   }
@@ -699,7 +704,7 @@ function _compact($ctx, $property, $value, $usedCtx)
    // graph literal/disjoint graph
    else if(
       is_object($value) and
-      isset($value->{__S}) and is_array($value->{__S}))
+      property_exists($value, __S) and is_array($value->{__S}))
    {
       $rval = new stdClass();
       $rval->{__S} = _compact($ctx, $property, $value->{__S}, $usedCtx);
@@ -707,7 +712,8 @@ function _compact($ctx, $property, $value, $usedCtx)
    // value has sub-properties if it doesn't define a literal or IRI value
    else if(
       is_object($value) and
-      !isset($value->{'@literal'}) and !isset($value->{'@iri'}))
+      !property_exists($value, '@literal') and
+      !property_exists($value, '@iri'))
    {
       // recursively handle sub-properties that aren't a sub-context
       $rval = new stdClass();
@@ -732,15 +738,15 @@ function _compact($ctx, $property, $value, $usedCtx)
       if(is_object($value))
       {
          // type coercion can only occur if language is not specified
-         if(!isset($value->{'@language'}))
+         if(!property_exists($value, '@language'))
          {
             // datatype must match coerce type if specified
-            if(isset($value->{'@datatype'}))
+            if(property_exists($value, '@datatype'))
             {
                $type = $value->{'@datatype'};
             }
             // datatype is IRI
-            else if(isset($value->{'@iri'}))
+            else if(property_exists($value, '@iri'))
             {
                $type = JSONLD_XSD_ANY_URI;
             }
@@ -787,11 +793,11 @@ function _compact($ctx, $property, $value, $usedCtx)
          {
             if(is_object($value))
             {
-               if(isset($value->{'@iri'}))
+               if(property_exists($value, '@iri'))
                {
                   $rval = $value->{'@iri'};
                }
-               else if(isset($value->{'@literal'}))
+               else if(property_exists($value, '@literal'))
                {
                   $rval = $value->{'@literal'};
                }
@@ -879,10 +885,11 @@ function _expand($ctx, $property, $value, $expandSubjects)
    else if(is_object($value))
    {
       // value has sub-properties if it doesn't define a literal or IRI value
-      if(!(isset($value->{'@literal'}) or isset($value->{'@iri'})))
+      if(!(property_exists($value, '@literal') or
+         property_exists($value, '@iri')))
       {
          // if value has a context, use it
-         if(isset($value->{'@context'}))
+         if(property_exists($value, '@context'))
          {
             $ctx = jsonld_merge_contexts($ctx, $value->{'@context'});
          }
@@ -892,7 +899,8 @@ function _expand($ctx, $property, $value, $expandSubjects)
          foreach($value as $key => $v)
          {
             // preserve frame keywords
-            if($key === '@embed' or $key === '@explicit')
+            if($key === '@embed' or $key === '@explicit' or
+               $key === '@default' or $key === '@omitDefault')
             {
                _setProperty($rval, $key, _clone($v));
             }
@@ -981,8 +989,9 @@ function _isNamedBlankNode($v)
 {
    // look for "_:" at the beginning of the subject
    return (
-      is_object($v) and isset($v->{__S}) and
-      isset($v->{__S}->{'@iri'}) and _isBlankNodeIri($v->{__S}->{'@iri'}));
+      is_object($v) and property_exists($v, __S) and
+      property_exists($v->{__S}, '@iri') and
+      _isBlankNodeIri($v->{__S}->{'@iri'}));
 }
 
 function _isBlankNode($v)
@@ -990,8 +999,8 @@ function _isBlankNode($v)
    // look for no subject or named blank node
    return (
       is_object($v) and
-      !(isset($v->{'@iri'}) or isset($v->{'@literal'})) and
-      (!isset($v->{__S}) or _isNamedBlankNode($v)));
+      !(property_exists($v, '@iri') or property_exists($v, '@literal')) and
+      (!property_exists($v, __S) or _isNamedBlankNode($v)));
 }
 
 /**
@@ -1036,9 +1045,9 @@ function _compare($v1, $v2)
 function _compareObjectKeys($o1, $o2, $key)
 {
    $rval = 0;
-   if(isset($o1->$key))
+   if(property_exists($o1, $key))
    {
-      if(isset($o2->$key))
+      if(property_exists($o2, $key))
       {
          $rval = _compare($o1->$key, $o2->$key);
       }
@@ -1047,7 +1056,7 @@ function _compareObjectKeys($o1, $o2, $key)
          $rval = -1;
       }
    }
-   else if(isset($o2->$key))
+   else if(property_exists($o2, $key))
    {
       $rval = 1;
    }
@@ -1086,7 +1095,7 @@ function _compareObjects($o1, $o2)
       $rval = _compareObjectKeys($o1, $o2, '@literal');
       if($rval === 0)
       {
-         if(isset($o1->{'@literal'}))
+         if(property_exists($o1, '@literal'))
          {
             $rval = _compareObjectKeys($o1, $o2, '@datatype');
             if($rval === 0)
@@ -1115,7 +1124,7 @@ function _compareObjects($o1, $o2)
 function _filterBlankNodes($e)
 {
    return (is_string($e) or
-      !(isset($e->{'@iri'}) and _isBlankNodeIri($e->{'@iri'})));
+      !(property_exists($e, '@iri') and _isBlankNodeIri($e->{'@iri'})));
 }
 
 /**
@@ -1242,7 +1251,7 @@ function _collectSubjects($input, $subjects, $bnodes)
    }
    else if(is_object($input))
    {
-      if(isset($input->{__S}))
+      if(property_exists($input, __S))
       {
          // graph literal
          if(is_array($input->{__S}))
@@ -1281,7 +1290,7 @@ class DuplicateIriFilter
 
    public function filter($e)
    {
-      return (is_object($e) and isset($e->{'@iri'}) and
+      return (is_object($e) and property_exists($e, '@iri') and
          $e->{'@iri'} === $this->iri);
    }
 }
@@ -1311,7 +1320,7 @@ function _flatten($parent, $parentProperty, $value, $subjects)
    else if(is_object($value))
    {
       // graph literal/disjoint graph
-      if(isset($value->{__S}) and is_array($value->{__S}))
+      if(property_exists($value, __S) and is_array($value->{__S}))
       {
          // cannot flatten embedded graph literals
          if($parent !== null)
@@ -1326,7 +1335,9 @@ function _flatten($parent, $parentProperty, $value, $subjects)
          }
       }
       // already-expanded value
-      else if(isset($value->{'@literal'}) or isset($value->{'@iri'}))
+      else if(
+         property_exists($value, '@literal') or
+         property_exists($value, '@iri'))
       {
          $flattened = _clone($value);
       }
@@ -1334,7 +1345,7 @@ function _flatten($parent, $parentProperty, $value, $subjects)
       else
       {
          // create or fetch existing subject
-         if(isset($subjects->{$value->{__S}->{'@iri'}}))
+         if(property_exists($subjects, $value->{__S}->{'@iri'}))
          {
             // FIXME: __S might be a graph literal (as {})
             $subject = $subjects->{$value->{__S}->{'@iri'}};
@@ -1342,7 +1353,7 @@ function _flatten($parent, $parentProperty, $value, $subjects)
          else
          {
             $subject = new stdClass();
-            if(isset($value->{__S}))
+            if(property_exists($value, __S))
             {
                // FIXME: __S might be a graph literal (as {})
                $subjects->{$value->{__S}->{'@iri'}} = $subject;
@@ -1389,7 +1400,7 @@ function _flatten($parent, $parentProperty, $value, $subjects)
       // 'http://mypredicate': {'@subject': {'@iri': 'http://mysubject'}}
       // becomes
       // 'http://mypredicate': {'@iri': 'http://mysubject'}
-      if(is_object($flattened) and isset($flattened->{__S}))
+      if(is_object($flattened) and property_exists($flattened, __S))
       {
          $flattened = $flattened->{__S};
       }
@@ -1398,7 +1409,7 @@ function _flatten($parent, $parentProperty, $value, $subjects)
       {
          // do not add duplicate IRIs for the same property
          $duplicate = false;
-         if(is_object($flattened) and isset($flattened->{'@iri'}))
+         if(is_object($flattened) and property_exists($flattened, '@iri'))
          {
             $duplicate = count(array_filter(
                (array)$parent, array(
@@ -1460,7 +1471,7 @@ class MappingBuilder
     */
    public function mapNode($iri)
    {
-      if(!isset($this->mapping->$iri))
+      if(!property_exists($this->mapping, $iri))
       {
          if(strpos($iri, '_:c14n') === 0)
          {
@@ -1640,10 +1651,10 @@ class JsonLdProcessor
       // uniquely name all unnamed bnodes
       foreach($bnodes as $i => $bnode)
       {
-         if(!isset($bnode->{__S}))
+         if(!property_exists($bnode, __S))
          {
             // generate names until one is unique
-            while(isset($subjects->{$ng->next()}));
+            while(property_exists($subjects, $ng->next()));
             $bnode->{__S} = new stdClass();
             $bnode->{__S}->{'@iri'} = $ng->current();
             $subjects->{$ng->current()} = $bnode;
@@ -1701,7 +1712,8 @@ class JsonLdProcessor
                for($n = 0; $n < $length; ++$n)
                {
                   if(is_object($tmp[$n]) and
-                     isset($tmp[$n]->{'@iri'}) and $tmp[$n]->{'@iri'} === $old)
+                     property_exists($tmp[$n], '@iri') and
+                     $tmp[$n]->{'@iri'} === $old)
                   {
                      $tmp[$n]->{'@iri'} = $id;
                   }
@@ -1775,7 +1787,7 @@ class JsonLdProcessor
          if($c14n->inNamespace($iri))
          {
             // generate names until one is unique
-            while(isset($subjects->{$ngTmp->next()}));
+            while(property_exists($subjects, $ngTmp->next()));
             $this->renameBlankNode($bnode, $ngTmp->current());
             $iri = $bnode->{__S}->{'@iri'};
          }
@@ -1814,7 +1826,8 @@ class JsonLdProcessor
             $renamed = array();
             foreach($keys as $i => $iriK)
             {
-               if(!$c14n->inNamespace($iri) and isset($subjects->$iriK))
+               if(!$c14n->inNamespace($iri) and
+                  property_exists($subjects, $iriK))
                {
                   $this->renameBlankNode($subjects->$iriK, $c14n->next());
                   $renamed[] = $iriK;
@@ -1868,7 +1881,7 @@ class JsonLdProcessor
    public function markSerializationDirty($iri, $changed, $dir)
    {
       $s = $this->serializations->$iri;
-      if($s->$dir !== null and isset($s->$dir->m->$changed))
+      if($s->$dir !== null and property_exists($s->$dir->m, $changed))
       {
          $s->$dir = null;
       }
@@ -1902,7 +1915,7 @@ class JsonLdProcessor
                {
                   $rval .= '|';
                }
-               if(is_object($obj) and isset($obj->{'@iri'}) and
+               if(is_object($obj) and property_exists($obj, '@iri') and
                   _isBlankNodeIri($obj->{'@iri'}))
                {
                   $rval .= '_:';
@@ -1932,12 +1945,12 @@ class JsonLdProcessor
       $rval = '';
       foreach($keys as $k)
       {
-         if(!isset($output->$k))
+         if(!property_exists($output, $k))
          {
             break;
          }
 
-         if(isset($done->$k))
+         if(property_exists($done, $k))
          {
             // mark cycle
             $rval .= '_' . $k;
@@ -1950,7 +1963,7 @@ class JsonLdProcessor
             {
                $rval .= $s;
                $iri = $tmp->m->$s;
-               if(isset($this->subjects->$iri))
+               if(property_exists($this->subjects, $iri))
                {
                   $b = $this->subjects->$iri;
 
@@ -2084,7 +2097,7 @@ class JsonLdProcessor
    public function serializeBlankNode($s, $iri, $mb, $dir)
    {
       // only do mapping if iri not already mapped
-      if(!isset($mb->mapped->$iri))
+      if(!property_exists($mb->mapped, $iri))
       {
          // iri now mapped
          $mb->mapped->$iri = true;
@@ -2099,7 +2112,7 @@ class JsonLdProcessor
          $notMapped = array();
          foreach($adjs as $adj)
          {
-            if(isset($mb->mapping->{$adj->s}))
+            if(property_exists($mb->mapping, $adj->s))
             {
                $mapped->{$mb->mapping->{$adj->s}} = $adj->s;
             }
@@ -2112,7 +2125,7 @@ class JsonLdProcessor
          // TODO: ensure this optimization does not alter canonical order
 
          // if the current bnode already has a serialization, reuse it
-         /*$hint = isset($this->serializations->$iri) ?
+         /*$hint = property_exists($this->serializations, $iri) ?
             $this->serializations->$iri->$dir : null;
          if($hint !== null)
          {
@@ -2350,8 +2363,8 @@ class JsonLdProcessor
                $tmp = !is_array($object) ? array($object) : $object;
                foreach($tmp as $o)
                {
-                  if(is_object($o) and isset($o->{'@iri'}) and
-                     isset($this->subjects->{$o->{'@iri'}}))
+                  if(is_object($o) and property_exists($o, '@iri') and
+                     property_exists($this->subjects, $o->{'@iri'}))
                   {
                      $objIri = $o->{'@iri'};
 
@@ -2401,9 +2414,9 @@ function _isType($input, $frame)
 
    // check if type(s) are specified in frame and input
    $type = JSONLD_RDF_TYPE;
-   if(isset($frame->{JSONLD_RDF_TYPE}) and
-      is_object($input) and isset($input->{__S}) and
-      isset($input->{JSONLD_RDF_TYPE}))
+   if(property_exists($frame, JSONLD_RDF_TYPE) and
+      is_object($input) and property_exists($input, __S) and
+      property_exists($input, JSONLD_RDF_TYPE))
    {
       $tmp = is_array($input->{JSONLD_RDF_TYPE}) ?
          $input->{JSONLD_RDF_TYPE} : array($input->{JSONLD_RDF_TYPE});
@@ -2452,7 +2465,7 @@ function _isDuckType($input, $frame)
    $rval = false;
 
    // frame must not have a specific type
-   if(!isset($frame->{JSONLD_RDF_TYPE}))
+   if(!property_exists($frame, JSONLD_RDF_TYPE))
    {
       // get frame properties that must exist on input
       $props = array_filter(array_keys((array)$frame), '_filterNonKeywords');
@@ -2462,12 +2475,12 @@ function _isDuckType($input, $frame)
          $rval = true;
       }
       // input must be a subject with all the given properties
-      else if(is_object($input) and isset($input->{__S}))
+      else if(is_object($input) and property_exists($input, __S))
       {
          $rval = true;
          foreach($props as $prop)
          {
-            if(!isset($input->$prop))
+            if(!property_exists($input, $prop))
             {
                $rval = false;
                break;
@@ -2531,8 +2544,8 @@ function _frame($subjects, $input, $frame, $embeds, $options)
       {
          // dereference input if it refers to a subject
          $next = $input[$n];
-         if(is_object($next) and isset($next->{'@iri'}) and
-            isset($subjects->{$next->{'@iri'}}))
+         if(is_object($next) and property_exists($next, '@iri') and
+            property_exists($subjects, $next->{'@iri'}))
          {
             $next = $subjects->{$next->{'@iri'}};
          }
@@ -2556,19 +2569,19 @@ function _frame($subjects, $input, $frame, $embeds, $options)
          $frame = $frames[$i1];
 
          // determine if value should be embedded or referenced
-         $embedOn = isset($frame->{'@embed'}) ?
+         $embedOn = property_exists($frame, '@embed') ?
             $frame->{'@embed'} : $options->defaults->embedOn;
          if(!$embedOn)
          {
             // if value is a subject, only use subject IRI as reference
-            if(is_object($value) and isset($value->{__S}))
+            if(is_object($value) and property_exists($value, __S))
             {
                $value = $value->{__S};
             }
          }
          else if(
-            is_object($value) and isset($value->{__S}) and
-            isset($embeds->{$value->{__S}->{'@iri'}}))
+            is_object($value) and property_exists($value, __S) and
+            property_exists($embeds, $value->{__S}->{'@iri'}))
          {
             // TODO: possibly support multiple embeds in the future ... and
             // instead only prevent cycles?
@@ -2577,19 +2590,19 @@ function _frame($subjects, $input, $frame, $embeds, $options)
                'subject=' . $value->{__S}->{'@iri'});
          }
          // if value is a subject, do embedding and subframing
-         else if(is_object($value) and isset($value->{__S}))
+         else if(is_object($value) and property_exists($value, __S))
          {
             $embeds->{$value->{__S}->{'@iri'}} = true;
 
             // if explicit is on, remove keys from value that aren't in frame
-            $explicitOn = isset($frame->{'@explicit'}) ?
+            $explicitOn = property_exists($frame, '@explicit') ?
                $frame->{'@explicit'} : $options->defaults->explicitOn;
             if($explicitOn)
             {
                foreach($value as $key => $v)
                {
-                  // always include subject
-                  if($key !== __S and !isset($frame->$key))
+                  // do not remove subject or any key in the frame
+                  if($key !== __S and !property_exists($frame, $key))
                   {
                      unset($value->$key);
                   }
@@ -2597,12 +2610,12 @@ function _frame($subjects, $input, $frame, $embeds, $options)
             }
 
             // iterate over frame keys to do subframing
-            foreach($frame as $key => $v)
+            foreach($frame as $key => $f)
             {
                // skip keywords and type query
                if(strpos($key, '@') !== 0 and $key !== JSONLD_RDF_TYPE)
                {
-                  if(isset($value->$key))
+                  if(property_exists($value, $key))
                   {
                      // build input and do recursion
                      $input = is_array($value->$key) ?
@@ -2612,19 +2625,66 @@ function _frame($subjects, $input, $frame, $embeds, $options)
                      {
                         // replace reference to subject w/subject
                         if(is_object($input[$n]) and
-                           isset($input[$n]->{'@iri'}) and
-                           isset($subjects->{$input[$n]->{'@iri'}}))
+                           property_exists($input[$n], '@iri') and
+                           property_exists($subjects, $input[$n]->{'@iri'}))
                         {
                            $input[$n] = $subjects->{$input[$n]->{'@iri'}};
                         }
                      }
                      $value->$key = _frame(
-                        $subjects, $input, $frame->$key, $embeds, $options);
+                        $subjects, $input, $f, $embeds, $options);
                   }
                   else
                   {
                      // add null property to value
                      $value->$key = null;
+                  }
+
+                  // handle setting default value(s)
+                  if(property_exists($value, $key))
+                  {
+                     // use first subframe if frame is an array
+                     if(is_array($f))
+                     {
+                        $f = (count($f) > 0) ? $f[0] : new stdClass();
+                     }
+
+                     // determine if omit default is on
+                     $omitOn = property_exists($f, '@omitDefault') ?
+                        $f->{'@omitDefault'} :
+                        $options->defaults->omitDefaultOn;
+
+                     if($value->$key === null)
+                     {
+                        if($omitOn)
+                        {
+                           unset($value->$key);
+                        }
+                        else if(property_exists($f, '@default'))
+                        {
+                           $value->$key = $f->{'@default'};
+                        }
+                     }
+                     else if(is_array($value->$key))
+                     {
+                        $tmp = array();
+                        foreach($value->$key as $v)
+                        {
+                           if($v === null)
+                           {
+                              if(!$omitOn)
+                              {
+                                 $tmp[] = property_exists($f, '$default') ?
+                                    $f->{'$default'} : null;
+                              }
+                           }
+                           else
+                           {
+                              $tmp[] = $v;
+                           }
+                        }
+                        $value->$key = $tmp;
+                     }
                   }
                }
             }
