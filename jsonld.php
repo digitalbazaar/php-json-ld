@@ -2672,10 +2672,10 @@ function _frame($subjects, $input, $frame, $embeds, $options)
                         {
                            if($v === null)
                            {
-                              if(!$omitOn)
+                              // do not auto-include null in arrays
+                              if(!$omitOn and property_exists($f, '$default'))
                               {
-                                 $tmp[] = property_exists($f, '$default') ?
-                                    $f->{'$default'} : null;
+                                 $tmp[] = $f->{'$default'};
                               }
                            }
                            else
