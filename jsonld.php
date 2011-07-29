@@ -856,9 +856,14 @@ function _expand($ctx, $property, $value, $expandSubjects)
 
    // TODO: add data format error detection?
 
+   // value is null, nothing to expand
+   if($value === null)
+   {
+      $rval = null;
+   }
    // if no property is specified and the value is a string (this means the
    // value is a property itself), expand to an IRI
-   if($property === null and is_string($value))
+   else if($property === null and is_string($value))
    {
       $rval = _expandTerm($ctx, $value, null);
    }
@@ -1224,7 +1229,11 @@ class NameGenerator
  */
 function _collectSubjects($input, $subjects, $bnodes)
 {
-   if(is_array($input))
+   if($input === null)
+   {
+      // nothing to collect
+   }
+   else if(is_array($input))
    {
       foreach($input as $value)
       {
@@ -1344,21 +1353,25 @@ function _flatten($parent, $parentProperty, $value, $subjects)
          // flatten embeds
          foreach($value as $key => $v)
          {
-            if(is_array($v))
+            // drop null values
+            if($v !== null)
             {
-               $subject->$key = new ArrayObject();
-               _flatten($subject->$key, null, $value->$key, $subjects);
-               $subject->$key = (array)$subject->$key;
-               if(count($subject->$key) === 1)
+               if(is_array($v))
                {
-                  // convert subject[key] to object if only 1 value was added
-                  $arr = $subject->$key;
-                  $subject->$key = $arr[0];
+                  $subject->$key = new ArrayObject();
+                  _flatten($subject->$key, null, $value->$key, $subjects);
+                  $subject->$key = (array)$subject->$key;
+                  if(count($subject->$key) === 1)
+                  {
+                     // convert subject[key] to object if it has only 1
+                     $arr = $subject->$key;
+                     $subject->$key = $arr[0];
+                  }
                }
-            }
-            else
-            {
-               _flatten($subject, $key, $value->$key, $subjects);
+               else
+               {
+                  _flatten($subject, $key, $value->$key, $subjects);
+               }
             }
          }
       }
