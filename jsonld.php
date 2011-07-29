@@ -2636,12 +2636,12 @@ function _frame($subjects, $input, $frame, $embeds, $options)
                   }
                   else
                   {
-                     // add null property to value
-                     $value->$key = null;
+                     // add empty array/null property to value
+                     $value->$key = is_array($f) ? array() : null;
                   }
 
-                  // handle setting default value(s)
-                  if(property_exists($value, $key))
+                  // handle setting default value
+                  if($value->$key === null)
                   {
                      // use first subframe if frame is an array
                      if(is_array($f))
@@ -2653,37 +2653,13 @@ function _frame($subjects, $input, $frame, $embeds, $options)
                      $omitOn = property_exists($f, '@omitDefault') ?
                         $f->{'@omitDefault'} :
                         $options->defaults->omitDefaultOn;
-
-                     if($value->$key === null)
+                     if($omitOn)
                      {
-                        if($omitOn)
-                        {
-                           unset($value->$key);
-                        }
-                        else if(property_exists($f, '@default'))
-                        {
-                           $value->$key = $f->{'@default'};
-                        }
+                        unset($value->$key);
                      }
-                     else if(is_array($value->$key))
+                     else if(property_exists($f, '@default'))
                      {
-                        $tmp = array();
-                        foreach($value->$key as $v)
-                        {
-                           if($v === null)
-                           {
-                              // do not auto-include null in arrays
-                              if(!$omitOn and property_exists($f, '$default'))
-                              {
-                                 $tmp[] = $f->{'$default'};
-                              }
-                           }
-                           else
-                           {
-                              $tmp[] = $v;
-                           }
-                        }
-                        $value->$key = $tmp;
+                        $value->$key = $f->{'@default'};
                      }
                   }
                }
