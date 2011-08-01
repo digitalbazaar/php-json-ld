@@ -9,6 +9,8 @@ more information, creating a "Web of Knowledge". JSON-LD is intended to
 be a simple publishing method for expressing not only Linked Data in
 JSON, but for adding semantics to existing JSON.
 
+This library is an implementation of the JSON-LD specification in PHP.
+
 JSON-LD is designed as a light-weight syntax that can be used to express
 Linked Data. It is primarily intended to be a way to express Linked Data
 in Javascript and other Web-based programming environments. It is also
