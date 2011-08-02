@@ -118,7 +118,7 @@ function jsonld_add_context($ctx, $input)
       {
          foreach($rval as $v)
          {
-            $v->{'@context'} = _cloneContext($ctxOut);
+            $v->{'@context'} = _clone($ctxOut);
          }
       }
       else
@@ -160,8 +160,8 @@ function jsonld_compact($ctx, $input)
 function jsonld_merge_contexts($ctx1, $ctx2)
 {
    // copy contexts
-   $merged = _cloneContext($ctx1);
-   $copy = _cloneContext($ctx2);
+   $merged = _clone($ctx1);
+   $copy = _clone($ctx2);
 
    // if the new context contains any IRIs that are in the merged context,
    // remove them from the merged context, they will be overwritten
@@ -541,10 +541,8 @@ function _setProperty($s, $p, $o)
 }
 
 /**
- * Clones a string/number or an object and sorts the keys. Deep clone
- * is not performed. This function will deep copy arrays, but that feature
- * isn't needed in this implementation at present. If it is needed in the
- * future, it will have to be implemented here.
+ * Clones an object, array, or string/number. If cloning an object, the keys
+ * will be sorted.
  *
  * @param value the value to clone.
  *
@@ -561,7 +559,15 @@ function _clone($value)
       sort($keys);
       foreach($keys as $key)
       {
-         $rval->$key = $value->$key;
+         $rval->$key = _clone($value->$key);
+      }
+   }
+   else if(is_array($value))
+   {
+      $rval = array();
+      foreach($value as $v)
+      {
+         $rval[] = _clone($v);
       }
    }
    else
@@ -569,35 +575,6 @@ function _clone($value)
       $rval = $value;
    }
 
-   return $rval;
-}
-
-/**
- * Clones a context.
- *
- * @param ctx the context to clone.
- *
- * @return the clone of the context.
- */
-function _cloneContext($ctx)
-{
-   $rval = new stdClass();
-   foreach($ctx as $key => $value)
-   {
-      // deep-copy @coerce
-      if($key === '@coerce')
-      {
-         $rval->{'@coerce'} = new stdClass();
-         foreach($ctx->{'@coerce'} as $type => $p)
-         {
-            $rval->{'@coerce'}->$type = $p;
-         }
-      }
-      else
-      {
-         $rval->$key = $ctx->$key;
-      }
-   }
    return $rval;
 }
 
@@ -1449,9 +1426,16 @@ class MappingBuilder
    public function __construct()
    {
       $this->count = 1;
-      $this->mapped = new stdClass();
+      $this->processed = new stdClass();
       $this->mapping = new stdClass();
-      $this->output = new stdClass();
+      $this->adj = new stdClass();
+      $this->keyStack = array();
+      $entry = new stdClass();
+      $entry->keys = array('s1');
+      $entry->idx = 0;
+      $this->keyStack[] = $entry;
+      $this->done = new stdClass();
+      $this->s = '';
    }
 
    /**
@@ -1463,9 +1447,12 @@ class MappingBuilder
    {
       $rval = new MappingBuilder();
       $rval->count = $this->count;
-      $rval->mapped = _clone($this->mapped);
+      $rval->processed = _clone($this->processed);
       $rval->mapping = _clone($this->mapping);
-      $rval->output = _clone($this->output);
+      $rval->adj = _clone($this->adj);
+      $rval->keyStack = _clone($this->keyStack);
+      $rval->done = _clone($this->done);
+      $rval->s = $this->s;
       return $rval;
    }
 
@@ -1941,48 +1928,49 @@ class JsonLdProcessor
    }
 
    /**
-    * Recursively creates a relation serialization (partial or full).
+    * Recursively increments the relation serialization for a mapping.
     *
-    * @param keys the keys to serialize in the current output.
-    * @param output the current mapping builder output.
-    * @param done the already serialized keys.
-    *
-    * @return the relation serialization.
+    * @param mb the mapping builder to update.
     */
-   public function recursiveSerializeMapping($keys, $output, $done)
+   public function serializeMapping($mb)
    {
-      $rval = '';
-      foreach($keys as $k)
+      if(count($mb->keyStack) > 0)
       {
-         if(!property_exists($output, $k))
+         // continue from top of key stack
+         $next = array_pop($mb->keyStack);
+         $len = count($next->keys);
+         for(; $next->idx < $len; ++$next->idx)
          {
-            break;
-         }
-
-         if(property_exists($done, $k))
-         {
-            // mark cycle
-            $rval .= '_' . $k;
-         }
-         else
-         {
-            $done->$k = true;
-            $tmp = $output->$k;
-            foreach($tmp->k as $s)
+            $k = $next->keys[$next->idx];
+            if(!property_exists($mb->adj, $k))
             {
-               $rval .= $s;
-               $iri = $tmp->m->$s;
+               $mb->keyStack[] = $next;
+               break;
+            }
+
+            if(property_exists($mb->done, $k))
+            {
+               // mark cycle
+               $mb->s .= '_' . $k;
+            }
+            else
+            {
+               // mark key as serialized
+               $mb->done->$k = true;
+
+               // serialize top-level key and its details
+               $s = $k;
+               $adj = $mb->adj->$k;
+               $iri = $adj->i;
                if(property_exists($this->subjects, $iri))
                {
                   $b = $this->subjects->$iri;
 
                   // serialize properties
-                  $rval .= '<';
-                  $rval .= $this->serializeProperties($b);
-                  $rval .= '>';
+                  $s .= '<' . $this->serializeProperties($b) . '>';
 
                   // serialize references
-                  $rval .= '<';
+                  $s .= '<';
                   $first = true;
                   $refs = $this->edges->refs->$iri->all;
                   foreach($refs as $r)
@@ -1993,52 +1981,46 @@ class JsonLdProcessor
                      }
                      else
                      {
-                        $rval .= '|';
+                        $s .= '|';
                      }
-                     $rval .= _isBlankNodeIri($r->s) ? '_:' : $refs->s;
+                     $s .= _isBlankNodeIri($r->s) ? '_:' : $refs->s;
                   }
-                  $rval .= '>';
+                  $s .= '>';
                }
-            }
 
-            $rval .= $this->recursiveSerializeMapping($tmp->k, $output, $done);
+               // serialize adjacent node keys
+               $s .= implode($adj->k);
+               $mb->s .= $s;
+               $entry = new stdClass();
+               $entry->keys = $adj->k;
+               $entry->idx = 0;
+               $mb->keyStack[] = $entry;
+               $this->serializeMapping($mb);
+            }
          }
       }
-      return $rval;
-   }
-
-   /**
-    * Creates a relation serialization (partial or full).
-    *
-    * @param output the current mapping builder output.
-    *
-    * @return the relation serialization.
-    */
-   public function serializeMapping($output)
-   {
-      return $this->recursiveSerializeMapping(
-         array('s1'), $output, new stdClass());
    }
 
    /**
     * Recursively serializes adjacent bnode combinations.
     *
     * @param s the serialization to update.
-    * @param top the top of the serialization.
+    * @param iri the IRI of the bnode being serialized.
+    * @param siri the serialization name for the bnode IRI.
     * @param mb the MappingBuilder to use.
     * @param dir the edge direction to use ('props' or 'refs').
     * @param mapped all of the already-mapped adjacent bnodes.
     * @param notMapped all of the not-yet mapped adjacent bnodes.
     */
    public function serializeCombos(
-      $s, $top, $mb, $dir, $mapped, $notMapped)
+      $s, $iri, $siri, $mb, $dir, $mapped, $notMapped)
    {
-      // copy mapped nodes
-      $mapped = _clone($mapped);
-
       // handle recursion
       if(count($notMapped) > 0)
       {
+         // copy mapped nodes
+         $mapped = _clone($mapped);
+
          // map first bnode in list
          $mapped->{$mb->mapNode($notMapped[0]->s)} = $notMapped[0]->s;
 
@@ -2049,46 +2031,43 @@ class JsonLdProcessor
          for($r = 0; $r < $rotations; ++$r)
          {
             $m = ($r === 0) ? $mb : $original->copy();
-            $this->serializeCombos($s, $top, $m, $dir, $mapped, $notMapped);
+            $this->serializeCombos(
+               $s, $iri, $siri, $m, $dir, $mapped, $notMapped);
 
             // rotate not-mapped for next combination
             _rotate($notMapped);
          }
       }
-      // handle final adjacent node in current combination
+      // no more adjacent bnodes to map, update serialization
       else
       {
          $keys = array_keys((array)$mapped);
          sort($keys);
-         $mb->output->$top = new stdClass();
-         $mb->output->$top->k = $keys;
-         $mb->output->$top->m = $mapped;
+         $entry = new stdClass();
+         $entry->i = $iri;
+         $entry->k = $keys;
+         $entry->m = $mapped;
+         $mb->adj->$siri = $entry;
+         $this->serializeMapping($mb);
 
          // optimize away mappings that are already too large
-         $_s = $this->serializeMapping($mb->output);
-         if($s->$dir === null or _compareSerializations($_s, $s->$dir->s) <= 0)
+         if($s->$dir === null or
+            _compareSerializations($mb->s, $s->$dir->s) <= 0)
          {
-            $oldCount = $mb->count;
-
             // recurse into adjacent values
             foreach($keys as $i => $k)
             {
                $this->serializeBlankNode($s, $mapped->$k, $mb, $dir);
             }
 
-            // reserialize if more nodes were mapped
-            if($mb->count > $oldCount)
-            {
-               $_s = $this->serializeMapping($mb->output);
-            }
-
             // update least serialization if new one has been found
+            $this->serializeMapping($mb);
             if($s->$dir === null or
-               (_compareSerializations($_s, $s->$dir->s) <= 0 and
-               count($_s) >= count($s->$dir->s)))
+               (_compareSerializations($mb->s, $s->$dir->s) <= 0 and
+               strlen($mb->s) >= strlen($s->$dir->s)))
             {
                $s->$dir = new stdClass();
-               $s->$dir->s = $_s;
+               $s->$dir->s = $mb->s;
                $s->$dir->m = $mb->mapping;
             }
          }
@@ -2105,12 +2084,12 @@ class JsonLdProcessor
     */
    public function serializeBlankNode($s, $iri, $mb, $dir)
    {
-      // only do mapping if iri not already mapped
-      if(!property_exists($mb->mapped, $iri))
+      // only do mapping if iri not already processed
+      if(!property_exists($mb->processed, $iri))
       {
-         // iri now mapped
-         $mb->mapped->$iri = true;
-         $top = $mb->mapNode($iri);
+         // iri now processed
+         $mb->processed->$iri = true;
+         $siri = $mb->mapNode($iri);
 
          // copy original mapping builder
          $original = $mb->copy();
@@ -2155,7 +2134,8 @@ class JsonLdProcessor
          for($i = 0; $i < $combos; ++$i)
          {
             $m = ($i === 0) ? $mb : $original->copy();
-            $this->serializeCombos($s, $top, $mb, $dir, $mapped, $notMapped);
+            $this->serializeCombos(
+               $s, $iri, $siri, $mb, $dir, $mapped, $notMapped);
          }
       }
    }
