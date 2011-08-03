@@ -1895,30 +1895,62 @@ class JsonLdProcessor
    {
       $rval = '';
 
+      $first = true;
       foreach($b as $p => $o)
       {
          if($p !== '@subject')
          {
-            $first = true;
+            if($first)
+            {
+               $first = false;
+            }
+            else
+            {
+               $rval .= '|';
+            }
+
+            // property
+            $rval .= '<' . $p . '>';
+
+            // object(s)
             $objs = is_array($o) ? $o : array($o);
             foreach($objs as $obj)
             {
-               if($first)
+               if(is_object($obj))
                {
-                  $first = false;
+                  // iri
+                  if(property_exists($obj, '@iri'))
+                  {
+                     if(_isBlankNodeIri($obj->{'@iri'}))
+                     {
+                        $rval .= '_:';
+                     }
+                     else
+                     {
+                        $rval .= '<' . $obj->{'@iri'} . '>';
+                     }
+                  }
+                  // literal
+                  else
+                  {
+                     $rval .= '"' . $obj->{'@literal'} . '"';
+
+                     // datatype literal
+                     if(property_exists($obj, '@datatype'))
+                     {
+                        $rval .= '^^<' . $obj->{'@datatype'} . '>';
+                     }
+                     // language literal
+                     else if(property_exists($obj, '@language'))
+                     {
+                        $rval .= '@' . $obj->{'@language'};
+                     }
+                  }
                }
+               // plain literal
                else
                {
-                  $rval .= '|';
-               }
-               if(is_object($obj) and property_exists($obj, '@iri') and
-                  _isBlankNodeIri($obj->{'@iri'}))
-               {
-                  $rval .= '_:';
-               }
-               else
-               {
-                  $rval .= str_replace('\\/', '/', json_encode($obj));
+                  $rval .= '"' . $obj . '"';
                }
             }
          }
@@ -1967,10 +1999,10 @@ class JsonLdProcessor
                   $b = $this->subjects->$iri;
 
                   // serialize properties
-                  $s .= '<' . $this->serializeProperties($b) . '>';
+                  $s .= '[' . $this->serializeProperties($b) . ']';
 
                   // serialize references
-                  $s .= '<';
+                  $s .= '[';
                   $first = true;
                   $refs = $this->edges->refs->$iri->all;
                   foreach($refs as $r)
@@ -1983,9 +2015,11 @@ class JsonLdProcessor
                      {
                         $s .= '|';
                      }
-                     $s .= _isBlankNodeIri($r->s) ? '_:' : $refs->s;
+                     $s .= '<' . $r->p . '>';
+                     $s .= _isBlankNodeIri($r->s) ?
+                        '_:' : ('<' . $refs->s . '>');
                   }
-                  $s .= '>';
+                  $s .= ']';
                }
 
                // serialize adjacent node keys
