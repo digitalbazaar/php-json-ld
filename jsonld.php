@@ -18,39 +18,6 @@ define('JSONLD_XSD_INTEGER', JSONLD_XSD . 'integer');
 define('JSONLD_XSD_ANY_URI', JSONLD_XSD . 'anyURI');
 
 /**
- * Creates the JSON-LD default context.
- *
- * @return the JSON-LD default context.
- */
-function jsonld_create_default_context()
-{
-   return (object)array(
-      'rdf' => JSONLD_RDF,
-      'rdfs' => 'http://www.w3.org/2000/01/rdf-schema#',
-      'owl' => 'http://www.w3.org/2002/07/owl#',
-      'xsd' => 'http://www.w3.org/2001/XMLSchema#',
-      'dcterms' => 'http://purl.org/dc/terms/',
-      'foaf' => 'http://xmlns.com/foaf/0.1/',
-      'cal' => 'http://www.w3.org/2002/12/cal/ical#',
-      'vcard' => 'http://www.w3.org/2006/vcard/ns#',
-      'geo' => 'http://www.w3.org/2003/01/geo/wgs84_pos#',
-      'cc' => 'http://creativecommons.org/ns#',
-      'sioc' => 'http://rdfs.org/sioc/ns#',
-      'doap' => 'http://usefulinc.com/ns/doap#',
-      'com' => 'http://purl.org/commerce#',
-      'ps' => 'http://purl.org/payswarm#',
-      'gr' => 'http://purl.org/goodrelations/v1#',
-      'sig' => 'http://purl.org/signature#',
-      'ccard' => 'http://purl.org/commerce/creditcard#',
-      '@coerce' => (object)array(
-         'xsd:anyURI' => array('foaf:homepage', 'foaf:member'),
-         'xsd:integer' => 'foaf:age'
-      ),
-      '@vocab' => ''
-   );
-}
-
-/**
  * Normalizes a JSON-LD object.
  *
  * @param input the JSON-LD object to normalize.
@@ -64,89 +31,81 @@ function jsonld_normalize($input)
 };
 
 /**
- * Removes the context from a JSON-LD object.
+ * Removes the context from a JSON-LD object, expanding it to full-form.
  *
  * @param input the JSON-LD object to remove the context from.
  *
  * @return the context-neutral JSON-LD object.
  */
-function jsonld_remove_context($input)
+function jsonld_expand($input)
 {
    $rval = null;
 
    if($input !== null)
    {
-      $ctx = jsonld_create_default_context();
-      $rval = _expand($ctx, null, $input, false);
+      $rval = _expand(new stdClass(), null, $input, false);
    }
 
    return $rval;
 };
-function jsonld_expand($input)
-{
-   return jsonld_remove_context($input);
-}
 
 /**
- * Adds the given context to the given context-neutral JSON-LD object.
- *
- * @param ctx the new context to use.
- * @param input the context-neutral JSON-LD object to add the context to.
- *
- * @return the JSON-LD object with the new context.
- */
-function jsonld_add_context($ctx, $input)
-{
-   $rval;
-
-   // TODO: should context simplification be optional? (ie: remove context
-   // entries that are not used in the output)
-
-   $ctx = jsonld_merge_contexts(jsonld_create_default_context(), $ctx);
-
-   // setup output context
-   $ctxOut = new stdClass();
-
-   // compact
-   $rval = _compact($ctx, null, $input, $ctxOut);
-
-   // add context if used
-   if(count(array_keys((array)$ctxOut)) > 0)
-   {
-      // add copy of context to every entry in output array
-      if(is_array($rval))
-      {
-         foreach($rval as $v)
-         {
-            $v->{'@context'} = _clone($ctxOut);
-         }
-      }
-      else
-      {
-         $rval->{'@context'} = $ctxOut;
-      }
-   }
-
-   return $rval;
-}
-
-/**
- * Changes the context of JSON-LD object "input" to "context", returning the
- * output.
+ * Expands the given JSON-LD object and then compacts it using the
+ * given context.
  *
  * @param ctx the new context to use.
  * @param input the input JSON-LD object.
  *
  * @return the output JSON-LD object.
  */
-function jsonld_change_context($ctx, $input)
-{
-   // remove context and then add new one
-   return jsonld_add_context($ctx, jsonld_remove_context($input));
-}
 function jsonld_compact($ctx, $input)
 {
-   return jsonld_change_context($ctx, $input);
+   $rval = null;
+
+   // TODO: should context simplification be optional? (ie: remove context
+   // entries that are not used in the output)
+
+   if($input !== null)
+   {
+      // fully expand input
+      $input = jsonld_expand($input);
+
+      if(is_array($input))
+      {
+         $rval = array();
+         $tmp = $input;
+      }
+      else
+      {
+         $tmp = array($input);
+      }
+
+      foreach($tmp as $value)
+      {
+         // setup output context
+         $ctxOut = new stdClass();
+
+         // compact
+         $out = _compact(_clone($ctx), null, $value, $ctxOut);
+
+         // add context if used
+         if(count(array_keys((array)$ctxOut)) > 0)
+         {
+            $out->{'@context'} = $ctxOut;
+         }
+
+         if($rval === null)
+         {
+            $rval = $out;
+         }
+         else
+         {
+            $rval[] = $out;
+         }
+      }
+   }
+
+   return $rval;
 }
 
 /**
@@ -333,12 +292,11 @@ function jsonld_frame($input, $frame, $options=null)
    $ctx = null;
    if(property_exists($frame, '@context'))
    {
-      $ctx = jsonld_merge_contexts(
-         jsonld_create_default_context(), $frame->{'@context'});
+      $ctx = _clone($frame->{'@context'});
    }
 
    // remove context from frame
-   $frame = jsonld_remove_context($frame);
+   $frame = jsonld_expand($frame);
 
    // create framing options
    // TODO: merge in options from function parameter
@@ -361,7 +319,7 @@ function jsonld_frame($input, $frame, $options=null)
    // apply context
    if($ctx !== null and $rval !== null)
    {
-      $rval = jsonld_add_context($ctx, $rval);
+      $rval = jsonld_compact($ctx, $rval);
    }
 
    return $rval;
@@ -503,10 +461,14 @@ function _expandTerm($ctx, $term, $usedCtx)
    // 5. The property is a relative IRI, prepend the default vocab.
    else
    {
-      $rval = $ctx->{'@vocab'} . $term;
-      if($usedCtx !== null)
+      $rval = $term;
+      if(property_exists($ctx, '@vocab'))
       {
-         $usedCtx->{'@vocab'} = $ctx->{'@vocab'};
+         $rval = $ctx->{'@vocab'} . $rval;
+         if($usedCtx !== null)
+         {
+            $usedCtx->{'@vocab'} = $ctx->{'@vocab'};
+         }
       }
    }
 
@@ -600,7 +562,7 @@ function _getCoerceType($ctx, $property, $usedCtx)
       $rval = JSONLD_XSD_ANY_URI;
    }
    // check type coercion for property
-   else
+   else if(property_exists($ctx, '@coerce'))
    {
       // force compacted property
       $p = _compactIri($ctx, $p, null);
@@ -1593,11 +1555,8 @@ class JsonLdProcessor
 
       if($input !== null)
       {
-         // get default context
-         $ctx = jsonld_create_default_context();
-
          // expand input
-         $expanded = _expand($ctx, null, $input, true);
+         $expanded = _expand(new stdClass(), null, $input, true);
 
          // assign names to unnamed bnodes
          $this->nameBlankNodes($expanded);
