@@ -39,7 +39,8 @@ Digital Bazaar: support@digitalbazaar.com
 Source
 ------
 
-The source code for the PaySwarm WordPress plugin is available at:
+The source code for the PHP implementation of the JSON-LD processor
+is available at:
 
 http://github.com/digitalbazaar/php-json-ld
 
