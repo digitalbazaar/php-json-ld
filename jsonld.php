@@ -1321,6 +1321,10 @@ function _flatten($parent, $parentProperty, $value, $subjects)
                   {
                      $subject->$key = new ArrayObject(array($subject->$key));
                   }
+                  else
+                  {
+                     $subject->$key = new ArrayObject($subject->$key);
+                  }
                }
                else
                {
