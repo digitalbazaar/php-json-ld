@@ -1315,21 +1315,25 @@ function _flatten($parent, $parentProperty, $value, $subjects)
             // drop null values
             if($v !== null)
             {
-               if(is_array($v))
+               if(property_exists($subject, $key))
                {
-                  $subject->$key = new ArrayObject();
-                  _flatten($subject->$key, null, $value->$key, $subjects);
-                  $subject->$key = (array)$subject->$key;
-                  if(count($subject->$key) === 1)
+                  if(!is_array($subject->$key))
                   {
-                     // convert subject[key] to object if it has only 1
-                     $arr = $subject->$key;
-                     $subject->$key = $arr[0];
+                     $subject->$key = new ArrayObject(array($subject->$key));
                   }
                }
                else
                {
-                  _flatten($subject, $key, $value->$key, $subjects);
+                  $subject->$key = new ArrayObject();
+               }
+
+               _flatten($subject->$key, null, $value->$key, $subjects);
+               $subject->$key = (array)$subject->$key;
+               if(count($subject->$key) === 1)
+               {
+                  // convert subject[key] to object if it has only 1
+                  $arr = $subject->$key;
+                  $subject->$key = $arr[0];
                }
             }
          }
