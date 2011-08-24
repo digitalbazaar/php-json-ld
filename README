@@ -44,3 +44,12 @@ is available at:
 
 http://github.com/digitalbazaar/php-json-ld
 
+To run the tests, checkout:
+
+http://github.com/digitalbazaar/jsonld.js
+
+And create a symbolic link called 'tests' in your php-json-ld
+directory to the 'tests/jsonld' directory in your jsonld.js
+directory. Then run:
+
+php jsonld-tests.php
