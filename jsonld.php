@@ -9,11 +9,9 @@
 define('JSONLD_RDF', 'http://www.w3.org/1999/02/22-rdf-syntax-ns#');
 define('JSONLD_RDF_TYPE', JSONLD_RDF . 'type');
 define('JSONLD_XSD', 'http://www.w3.org/2001/XMLSchema#');
-define('JSONLD_XSD_ANY_TYPE', JSONLD_XSD . 'anyType');
 define('JSONLD_XSD_BOOLEAN', JSONLD_XSD . 'boolean');
 define('JSONLD_XSD_DOUBLE', JSONLD_XSD . 'double');
 define('JSONLD_XSD_INTEGER', JSONLD_XSD . 'integer');
-define('JSONLD_XSD_ANY_URI', JSONLD_XSD . 'anyURI');
 
 /**
  * Normalizes a JSON-LD object.
@@ -1285,7 +1283,7 @@ class JsonLdProcessor
                // datatype is IRI
                else if(property_exists($value, '@iri'))
                {
-                  $type = JSONLD_XSD_ANY_URI;
+                  $type = '@iri';
                }
                // can be coerced to any type
                else
@@ -1374,7 +1372,7 @@ class JsonLdProcessor
          }
 
          // compact IRI
-         if($type === JSONLD_XSD_ANY_URI)
+         if($type === '@iri')
          {
             if(is_object($rval))
             {
@@ -1517,7 +1515,7 @@ class JsonLdProcessor
             $rval = new stdClass();
 
             // expand IRI
-            if($coerce === JSONLD_XSD_ANY_URI)
+            if($coerce === '@iri')
             {
                $rval->{'@iri'} = _expandTerm($ctx, $value, null);
             }
@@ -1621,7 +1619,7 @@ class JsonLdProcessor
       // built-in type coercion JSON-LD-isms
       if($p === '@subject' or $p === JSONLD_RDF_TYPE)
       {
-         $rval = JSONLD_XSD_ANY_URI;
+         $rval = '@iri';
       }
       // check type coercion for property
       else if(property_exists($ctx, '@coerce'))
@@ -1644,13 +1642,6 @@ class JsonLdProcessor
                if($prop === $p)
                {
                   $rval = _expandTerm($ctx, $type, $usedCtx);
-
-                  // '@iri' is shortcut for JSONLD_XSD_ANY_URI
-                  if($rval === '@iri')
-                  {
-                     $rval = JSONLD_XSD_ANY_URI;
-                  }
-
                   if($usedCtx !== null)
                   {
                      if(!property_exists($usedCtx, '@coerce'))
