@@ -10,7 +10,7 @@ require_once('jsonld.php');
 
 // determine EOL for output based on command line php or webpage php
 $isCli = defined('STDIN');
-$eol = $isCli ? "\n" : '</br>';
+$eol = $isCli ? "\n" : '<br/>';
 
 function error_handler($errno, $errstr, $errfile, $errline)
 {
@@ -266,6 +266,9 @@ class TestRunner
          tests in the group. If 'group' is not present then 'name' must be present
          as well as 'input' and 'expect'. Groups may be embedded.
        */
+
+      global $eol;
+
       foreach($tests as $test)
       {
          if(isset($test->group))
@@ -282,6 +285,14 @@ class TestRunner
          else
          {
             $this->test($test->name);
+
+            $type = $test->type;
+
+            if($type === 'triples')
+            {
+               echo "SKIP$eol";
+               continue;
+            }
 
             // use parent test filepath as necessary
             if(!isset($test->filepath))
@@ -302,7 +313,6 @@ class TestRunner
             }
 
             // perform test
-            $type = $test->type;
             if($type === 'normalize')
             {
                $input = jsonld_normalize($input);
