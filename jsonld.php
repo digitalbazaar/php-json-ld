@@ -2604,10 +2604,10 @@ function _subframe(
          $embed = new stdClass();
          $embeds->{$iri} = $embed;
       }
-      else
+      // replace the existing embed with a reference
+      else if($embed->{$parent} !== null)
       {
-         // replace the existing embed with a reference and update embed info
-         $embed->{$parent}->{$entry->key} = $value->{'@subject'};
+         $embed->{$parent}->{$embed->key} = $value->{'@subject'};
       }
 
       // update embed entry
