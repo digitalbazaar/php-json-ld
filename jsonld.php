@@ -305,7 +305,8 @@ function jsonld_frame($input, $frame, $options=null)
    }
 
    // frame input
-   $rval = _frame($subjects, $input, $frame, new stdClass(), $options);
+   $rval = _frame(
+      $subjects, $input, $frame, new stdClass(), false, null, null, $options);
 
    // apply context
    if($ctx !== null and $rval !== null)
@@ -2559,17 +2560,179 @@ function _isDuckType($input, $frame)
 }
 
 /**
+ * Subframes a value.
+ *
+ * @param subjects a map of subjects in the graph.
+ * @param value the value to subframe.
+ * @param frame the frame to use.
+ * @param embeds a map of previously embedded subjects, used to prevent cycles.
+ * @param autoembed true if auto-embed is on, false if not.
+ * @param parent the parent object.
+ * @param parentKey the parent object.
+ * @param options the framing options.
+ *
+ * @return the framed input.
+ */
+function _subframe(
+   $subjects, $value, $frame, $embeds, $autoembed,
+   $parent, $parentKey, $options)
+{
+   // get existing embed entry
+   $iri = $value->{'@subject'}->{'@iri'};
+   $embed = property_exists($embeds, $iri) ? $embeds->{$iri} : null;
+
+   // determine if value should be embedded or referenced,
+   // embed is ON if:
+   // 1. The frame OR default option specifies @embed as ON, AND
+   // 2. There is no existing embed OR it is an autoembed, AND
+   //    autoembed mode is off.
+   $embedOn =
+      ((property_exists($frame, '@embed') and $frame->{'@embed'}) or
+      $options->defaults->embedOn) and
+      ($embed === null or ($embed->autoembed and !$autoembed));
+
+   if(!$embedOn)
+   {
+      // not embedding, so only use subject IRI as reference
+      $value = $value->{'@subject'};
+   }
+   else
+   {
+      // create new embed entry
+      if($embed === null)
+      {
+         $embed = new stdClass();
+         $embeds->{$iri} = $embed;
+      }
+      else
+      {
+         // replace the existing embed with a reference and update embed info
+         $embed->{$parent}->{$entry->key} = $value->{'@subject'};
+      }
+
+      // update embed entry
+      $embed->autoembed = $autoembed;
+      $embed->parent = $parent;
+      $embed->key = $parentKey;
+
+      // check explicit flag
+      $explicitOn = property_exists($frame, '@explicit') ?
+         $frame->{'@explicit'} : $options->defaults->explicitOn;
+      if($explicitOn)
+      {
+         // remove keys from the value that aren't in the frame
+         foreach($value as $key => $v)
+         {
+            // do not remove @subject or any frame key
+            if($key !== '@subject' and !property_exists($frame, $key))
+            {
+               unset($value->$key);
+            }
+         }
+      }
+
+      // iterate over keys in value
+      foreach($value as $key => $v)
+      {
+         // skip keywords and type
+         if(strpos($key, '@') !== 0 and $key !== JSONLD_RDF_TYPE)
+         {
+            // get the subframe if available
+            if(property_exists($frame, $key))
+            {
+               $f = $frame->{$key};
+               $_autoembed = false;
+            }
+            // use a catch-all subframe to preserve data from graph
+            else
+            {
+               $f = is_array($v) ? array() : new stdClass();
+               $_autoembed = true;
+            }
+
+            // build input and do recursion
+            $input = is_array($v) ? $v : array($v);
+            $length = count($input);
+            for($n = 0; $n < $length; ++$n)
+            {
+               // replace reference to subject w/subject
+               if(is_object($input[$n]) and
+                  property_exists($input[$n], '@iri') and
+                  property_exists($subjects, $input[$n]->{'@iri'}))
+               {
+                  $input[$n] = $subjects->{$input[$n]->{'@iri'}};
+               }
+            }
+            $value->$key = _frame(
+               $subjects, $input, $f, $embeds, $_autoembed,
+               $value, $key, $options);
+         }
+      }
+
+      // iterate over frame keys to add any missing values
+      foreach($frame as $key => $f)
+      {
+         // skip keywords, type query, and keys in value
+         if(strpos($key, '@') !== 0 and $key !== JSONLD_RDF_TYPE and
+            !property_exists($value, $key))
+         {
+            // add empty array to value
+            if(is_array($f))
+            {
+               // add empty array/null property to value
+               $value->$key = array();
+            }
+            // add default value to value
+            else
+            {
+               // use first subframe if frame is an array
+               if(is_array($f))
+               {
+                  $f = (count($f) > 0) ? $f[0] : new stdClass();
+               }
+
+               // determine if omit default is on
+               $omitOn = property_exists($f, '@omitDefault') ?
+                  $f->{'@omitDefault'} :
+                  $options->defaults->omitDefaultOn;
+               if(!$omitOn)
+               {
+                  if(property_exists($f, '@default'))
+                  {
+                     // use specified default value
+                     $value->{$key} = $f->{'@default'};
+                  }
+                  else
+                  {
+                     // build-in default value is: null
+                     $value->{$key} = null;
+                  }
+               }
+            }
+         }
+      }
+   }
+
+   return $value;
+}
+
+/**
  * Recursively frames the given input according to the given frame.
  *
  * @param subjects a map of subjects in the graph.
  * @param input the input to frame.
  * @param frame the frame to use.
  * @param embeds a map of previously embedded subjects, used to prevent cycles.
+ * @param autoembed true if auto-embed is on, false if not.
+ * @param parent the parent object (for subframing), null for none.
+ * @param parentKey the parent key (for subframing), null for none.
  * @param options the framing options.
  *
  * @return the framed input.
  */
-function _frame($subjects, $input, $frame, $embeds, $options)
+function _frame(
+   $subjects, $input, $frame, $embeds, $autoembed,
+   $parent, $parentKey, $options)
 {
    $rval = null;
 
@@ -2634,102 +2797,12 @@ function _frame($subjects, $input, $frame, $embeds, $options)
       {
          $frame = $frames[$i1];
 
-         // determine if value should be embedded or referenced
-         $embedOn = property_exists($frame, '@embed') ?
-            $frame->{'@embed'} : $options->defaults->embedOn;
-         if(!$embedOn)
+         // if value is a subject, do subframing
+         if(is_object($value) and property_exists($value, '@subject'))
          {
-            // if value is a subject, only use subject IRI as reference
-            if(is_object($value) and property_exists($value, '@subject'))
-            {
-               $value = $value->{'@subject'};
-            }
-         }
-         else if(
-            is_object($value) and property_exists($value, '@subject') and
-            property_exists($embeds, $value->{'@subject'}->{'@iri'}))
-         {
-            // TODO: possibly support multiple embeds in the future ... and
-            // instead only prevent cycles?
-            throw new Exception(
-               'Multiple embeds of the same subject is not supported. ' .
-               'subject=' . $value->{'@subject'}->{'@iri'});
-         }
-         // if value is a subject, do embedding and subframing
-         else if(is_object($value) and property_exists($value, '@subject'))
-         {
-            $embeds->{$value->{'@subject'}->{'@iri'}} = true;
-
-            // if explicit is on, remove keys from value that aren't in frame
-            $explicitOn = property_exists($frame, '@explicit') ?
-               $frame->{'@explicit'} : $options->defaults->explicitOn;
-            if($explicitOn)
-            {
-               foreach($value as $key => $v)
-               {
-                  // do not remove subject or any key in the frame
-                  if($key !== '@subject' and !property_exists($frame, $key))
-                  {
-                     unset($value->$key);
-                  }
-               }
-            }
-
-            // iterate over frame keys to do subframing
-            foreach($frame as $key => $f)
-            {
-               // skip keywords and type query
-               if(strpos($key, '@') !== 0 and $key !== JSONLD_RDF_TYPE)
-               {
-                  if(property_exists($value, $key))
-                  {
-                     // build input and do recursion
-                     $input = is_array($value->$key) ?
-                        $value->$key : array($value->$key);
-                     $length = count($input);
-                     for($n = 0; $n < $length; ++$n)
-                     {
-                        // replace reference to subject w/subject
-                        if(is_object($input[$n]) and
-                           property_exists($input[$n], '@iri') and
-                           property_exists($subjects, $input[$n]->{'@iri'}))
-                        {
-                           $input[$n] = $subjects->{$input[$n]->{'@iri'}};
-                        }
-                     }
-                     $value->$key = _frame(
-                        $subjects, $input, $f, $embeds, $options);
-                  }
-                  else
-                  {
-                     // add empty array/null property to value
-                     $value->$key = is_array($f) ? array() : null;
-                  }
-
-                  // handle setting default value
-                  if($value->$key === null)
-                  {
-                     // use first subframe if frame is an array
-                     if(is_array($f))
-                     {
-                        $f = (count($f) > 0) ? $f[0] : new stdClass();
-                     }
-
-                     // determine if omit default is on
-                     $omitOn = property_exists($f, '@omitDefault') ?
-                        $f->{'@omitDefault'} :
-                        $options->defaults->omitDefaultOn;
-                     if($omitOn)
-                     {
-                        unset($value->$key);
-                     }
-                     else if(property_exists($f, '@default'))
-                     {
-                        $value->$key = $f->{'@default'};
-                     }
-                  }
-               }
-            }
+            $value = _subframe(
+               $subjects, $value, $frame, $embeds, $autoembed,
+               $parent, $parentKey, $options);
          }
 
          // add value to output
