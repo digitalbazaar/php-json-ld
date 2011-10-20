@@ -109,13 +109,12 @@ function jsonld_compact($ctx, $input)
  */
 function jsonld_merge_contexts($ctx1, $ctx2)
 {
-   // copy contexts
+   // copy context to merged output
    $merged = _clone($ctx1);
-   $copy = _clone($ctx2);
 
    // if the new context contains any IRIs that are in the merged context,
    // remove them from the merged context, they will be overwritten
-   foreach($copy as $key => $value)
+   foreach($ctx2 as $key => $value)
    {
       // ignore special keys starting with '@'
       if(strpos($key, '@') !== 0)
@@ -124,6 +123,7 @@ function jsonld_merge_contexts($ctx1, $ctx2)
          {
             if($mvalue === $value)
             {
+               // FIXME: update related @coerce rules
                unset($merged->$mkey);
                break;
             }
@@ -131,103 +131,30 @@ function jsonld_merge_contexts($ctx1, $ctx2)
       }
    }
 
-   // @coerce must be specially-merged, remove from contexts
-   $coerceExists =
-      property_exists($merged, '@coerce') or
-      property_exists($copy, '@coerce');
-   if($coerceExists)
-   {
-      $c1 = property_exists($merged, '@coerce') ?
-         $merged->{'@coerce'} : new stdClass();
-      $c2 = property_exists($copy, '@coerce') ?
-         $copy->{'@coerce'} : new stdClass();
-      unset($merged->{'@coerce'});
-      unset($copy->{'@coerce'});
-   }
-
    // merge contexts
-   foreach($copy as $key => $value)
+   foreach($ctx2 as $key => $value)
    {
-      $merged->$key = $value;
+      // skip @coerce, to be merged below
+      if($key !== '@coerce')
+      {
+         $merged->$key = _clone($value);
+      }
    }
 
-   // special-merge @coerce
-   if($coerceExists)
+   // merge @coerce
+   if(property_exists($ctx2, '@coerce'))
    {
-      foreach($c1 as $type => $p1)
+      if(!property_exists($merged, '@coerce'))
       {
-         // append existing-type properties that don't already exist
-         if(property_exists($c2, $type))
+         $merged->{'@coerce'} = _clone($ctx2->{'@coerce'});
+      }
+      else
+      {
+         foreach($ctx2->{'@coerce'} as $p => $type)
          {
-            $p2 = $c2->$type;
-
-            // normalize props in c2 to array for single-code-path iterating
-            if(!is_array($p2))
-            {
-               $p2 = array($p2);
-            }
-
-            // add unique properties from p2 to p1
-            foreach($p2 as $i => $p)
-            {
-               if((!is_array($p1) and $p1 !== $p) or
-                  (is_array($p1) and array_search($p, $p1) === false))
-               {
-                  if(is_array($p1))
-                  {
-                     $p1[] = $p;
-                  }
-                  else
-                  {
-                     $p1 = array($p1, $p);
-                  }
-               }
-            }
-
-            $c1->$type = $p1;
+            $merged->{'@coerce'}->$p = $type;
          }
       }
-
-      // add new types from new @coerce
-      foreach($c2 as $type => $value)
-      {
-         if(!property_exists($c1, $type))
-         {
-            $c1->$type = $value;
-         }
-      }
-
-      // ensure there are no property duplicates in @coerce
-      $unique = new stdClass();
-      $dups = array();
-      foreach($c1 as $type => $p)
-      {
-         if(is_string($p))
-         {
-            $p = array($p);
-         }
-         foreach($p as $v)
-         {
-            if(!property_exists($unique, $v))
-            {
-               $unique->$v = true;
-            }
-            else if(!in_array($v, $dups))
-            {
-               $dups[] = $v;
-            }
-         }
-      }
-
-      if(count($dups)> 0)
-      {
-         throw new Exception(
-            'Invalid type coercion specification. More than one ' .
-            'type specified for at least one property. duplicates=' .
-            print_r(dups, true));
-      }
-
-      $merged->{'@coerce'} = $c1;
    }
 
    return $merged;
@@ -1625,47 +1552,20 @@ class JsonLdProcessor
       // check type coercion for property
       else if(property_exists($ctx, '@coerce'))
       {
-         // force compacted property
+         // look up compacted property in coercion map
          $p = _compactIri($ctx, $p, null);
-
-         foreach($ctx->{'@coerce'} as $type => $props)
+         if(property_exists($ctx->{'@coerce'}, $p))
          {
-            // get coerced properties (normalize to an array)
-            if(!is_array($props))
+            // property found, return expanded type
+            $type = $ctx->{'@coerce'}->$p;
+            $rval = _expandTerm($ctx, $type, $usedCtx);
+            if($usedCtx !== null)
             {
-               $props = array($props);
-            }
-
-            // look for the property in the array
-            foreach($props as $prop)
-            {
-               // property found
-               if($prop === $p)
+               if(!property_exists($usedCtx, '@coerce'))
                {
-                  $rval = _expandTerm($ctx, $type, $usedCtx);
-                  if($usedCtx !== null)
-                  {
-                     if(!property_exists($usedCtx, '@coerce'))
-                     {
-                        $usedCtx->{'@coerce'} = new stdClass();
-                     }
-
-                     if(!property_exists($usedCtx->{'@coerce'}, $type))
-                     {
-                        $usedCtx->{'@coerce'}->$type = $p;
-                     }
-                     else
-                     {
-                        $c = $usedCtx->{'@coerce'}->$type;
-                        if(is_array($c) and in_array($p, $c) or
-                           is_string($c) and $c !== $p)
-                        {
-                           _setProperty($usedCtx->{'@coerce'}, $type, $p);
-                        }
-                     }
-                  }
-                  break;
+                  $usedCtx->{'@coerce'} = new stdClass();
                }
+               $usedCtx->{'@coerce'}->$p = $type;
             }
          }
       }
@@ -2672,9 +2572,9 @@ function _subframe(
       // iterate over frame keys to add any missing values
       foreach($frame as $key => $f)
       {
-         // skip keywords, type query, and keys in value
+         // skip keywords, type query, and non-null keys in value
          if(strpos($key, '@') !== 0 and $key !== JSONLD_RDF_TYPE and
-            !property_exists($value, $key))
+            (!property_exists($value, $key) || $value->{$key} === null))
          {
             // add empty array to value
             if(is_array($f))
