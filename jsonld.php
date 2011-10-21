@@ -2488,7 +2488,7 @@ function _subframe(
    //    autoembed mode is off.
    $embedOn =
       ((property_exists($frame, '@embed') and $frame->{'@embed'}) or
-      $options->defaults->embedOn) and
+      (!property_exists($frame, '@embed') and $options->defaults->embedOn)) and
       ($embed === null or ($embed->autoembed and !$autoembed));
 
    if(!$embedOn)
