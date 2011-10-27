@@ -70,6 +70,12 @@ function jsonld_compact($ctx, $input)
          $tmp = array($input);
       }
 
+      // merge context if it is an array
+      if(is_array($ctx))
+      {
+         $ctx = jsonld_merge_contexts(new stdClass, $ctx);
+      }
+
       foreach($tmp as $value)
       {
          // setup output context
@@ -109,50 +115,67 @@ function jsonld_compact($ctx, $input)
  */
 function jsonld_merge_contexts($ctx1, $ctx2)
 {
+   // merge first context if it is an array
+   if(is_array($ctx1))
+   {
+      $ctx1 = jsonld_merge_contexts($ctx1, $ctx2);
+   }
+
    // copy context to merged output
    $merged = _clone($ctx1);
 
-   // if the new context contains any IRIs that are in the merged context,
-   // remove them from the merged context, they will be overwritten
-   foreach($ctx2 as $key => $value)
+   if(is_array($ctx2))
    {
-      // ignore special keys starting with '@'
-      if(strpos($key, '@') !== 0)
+      // merge array of contexts in order
+      foreach($ctx2 as $ctx)
       {
-         foreach($merged as $mkey => $mvalue)
+         $merged = jsonld_merge_contexts($merged, $ctx);
+      }
+   }
+   else
+   {
+      // if the new context contains any IRIs that are in the merged context,
+      // remove them from the merged context, they will be overwritten
+      foreach($ctx2 as $key => $value)
+      {
+         // ignore special keys starting with '@'
+         if(strpos($key, '@') !== 0)
          {
-            if($mvalue === $value)
+            foreach($merged as $mkey => $mvalue)
             {
-               // FIXME: update related @coerce rules
-               unset($merged->$mkey);
-               break;
+               if($mvalue === $value)
+               {
+                  // FIXME: update related @coerce rules
+                  unset($merged->$mkey);
+                  break;
+               }
             }
          }
       }
-   }
 
-   // merge contexts
-   foreach($ctx2 as $key => $value)
-   {
-      // skip @coerce, to be merged below
-      if($key !== '@coerce')
+      // merge contexts
+      foreach($ctx2 as $key => $value)
       {
-         $merged->$key = _clone($value);
-      }
-   }
-
-   // merge @coerce
-   if(property_exists($ctx2, '@coerce'))
-   {
-      if(!property_exists($merged, '@coerce'))
-      {
-         $merged->{'@coerce'} = _clone($ctx2->{'@coerce'});
-      }
-      else
-      {
-         foreach($ctx2->{'@coerce'} as $p => $type)
+         // skip @coerce, to be merged below
+         if($key !== '@coerce')
          {
-            $merged->{'@coerce'}->$p = $type;
+            $merged->$key = _clone($value);
+         }
+      }
+
+      // merge @coerce
+      if(property_exists($ctx2, '@coerce'))
+      {
+         if(!property_exists($merged, '@coerce'))
+         {
+            $merged->{'@coerce'} = _clone($ctx2->{'@coerce'});
+         }
+         else
+         {
+            foreach($ctx2->{'@coerce'} as $p => $type)
+            {
+               $merged->{'@coerce'}->$p = $type;
+            }
          }
       }
    }
@@ -242,6 +265,114 @@ function jsonld_frame($input, $frame, $options=null)
    }
 
    return $rval;
+}
+
+/**
+ * Resolves external @context URLs. Every @context URL in the given JSON-LD
+ * object is resolved using the given URL-resolver function. Once all of
+ * the @contexts have been resolved, the method will return. If an error
+ * is encountered, an exception will be thrown.
+ *
+ * @param input the JSON-LD input object (or array).
+ * @param resolver the resolver method that takes a URL and returns a JSON-LD
+ *           serialized @context or throws an exception.
+ *
+ * @return the fully-resolved JSON-LD output (object or array).
+ */
+function jsonld_resolve($input, $resolver)
+{
+   // find all @context URLs
+   $urls = new ArrayObject();
+   _findUrls($input, $urls, false);
+
+   // resolve all URLs
+   foreach($urls as $url => $value)
+   {
+      $result = call_user_func($resolver, $url);
+      if(!is_string($result))
+      {
+         // already deserialized
+         $urls[$url] = $result;
+      }
+      else
+      {
+         // deserialize JSON
+         $tmp = json_decode($result);
+         if($tmp === null)
+         {
+            throw new Exception(
+               'Could not resolve @context URL ("$url"), ' .
+               'malformed JSON detected.');
+         }
+         $urls[$url] = $tmp;
+      }
+   }
+
+   // replace @context URLs in input
+   _findUrls($input, $urls, true);
+
+   return $input;
+}
+
+/**
+ * Finds all of the @context URLs in the given input and replaces them
+ * if requested by their associated values in the given URL map.
+ *
+ * @param input the JSON-LD input object.
+ * @param urls the URLs ArrayObject.
+ * @param replace true to replace, false not to.
+ */
+function _findUrls($input, $urls, $replace)
+{
+   if(is_array($input))
+   {
+      foreach($input as $v)
+      {
+         _findUrls($v);
+      }
+   }
+   else if(is_object($input))
+   {
+      foreach($input as $key => $value)
+      {
+         if($key === '@context')
+         {
+            // @context is an array that might contain URLs
+            if(is_array($value))
+            {
+               foreach($value as $idx => $v)
+               {
+                  if(is_string($v))
+                  {
+                     // replace w/resolved @context if appropriate
+                     if($replace)
+                     {
+                        $input->{$key}[$idx] = $urls[$v];
+                     }
+                     // unresolved @context found
+                     else
+                     {
+                        $urls[$v] = new stdClass();
+                     }
+                  }
+               }
+            }
+            else if(is_string($value))
+            {
+               // replace w/resolved @context if appropriate
+               if($replace)
+               {
+                  $input->$key = $urls[$value];
+               }
+               // unresolved @context found
+               else
+               {
+                  $urls[$value] = new stdClass();
+               }
+            }
+         }
+      }
+   }
 }
 
 /**
