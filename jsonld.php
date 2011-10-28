@@ -292,7 +292,7 @@ function jsonld_resolve($input, $resolver)
       if(!is_string($result))
       {
          // already deserialized
-         $urls[$url] = $result;
+         $urls[$url] = $result->{'@context'};
       }
       else
       {
@@ -304,7 +304,7 @@ function jsonld_resolve($input, $resolver)
                'Could not resolve @context URL ("$url"), ' .
                'malformed JSON detected.');
          }
-         $urls[$url] = $tmp;
+         $urls[$url] = $tmp->{'@context'};
       }
    }
 
