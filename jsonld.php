@@ -234,10 +234,26 @@ function jsonld_frame($input, $frame, $options=null)
    if(property_exists($frame, '@context'))
    {
       $ctx = _clone($frame->{'@context'});
-   }
 
-   // remove context from frame
-   $frame = jsonld_expand($frame);
+      // remove context from frame
+      $frame = jsonld_expand($frame);
+   }
+   else if(is_array($frame))
+   {
+      // save first context in the array
+      if(count($frame) > 0 and property_exists($frame[0], '@context'))
+      {
+         $ctx = _clone($frame[0]->{'@context'});
+      }
+
+      // expand all elements in the array
+      $tmp = array();
+      foreach($frame as $f)
+      {
+         $tmp[] = jsonld_expand($f);
+      }
+      $frame = $tmp;
+   }
 
    // create framing options
    // TODO: merge in options from function parameter
