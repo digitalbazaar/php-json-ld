@@ -1884,13 +1884,19 @@ class JsonLdProcessor
       }
 
       // keep sorting and naming blank nodes until they are all named
+      $resort = true;
       while(count($bnodes) > 0)
       {
-         usort($bnodes, array($this, 'deepCompareBlankNodes'));
+         if($resort)
+         {
+            usort($bnodes, array($this, 'deepCompareBlankNodes'));
+         }
 
          // name all bnodes according to the first bnode's relation mappings
+         // (if it has mappings then a resort will be necessary)
          $bnode = array_shift($bnodes);
          $iri = $bnode->{'@subject'}->{'@iri'};
+         $resort = ($this->serializations->$iri->{'props'} !== null);
          $dirs = array('props', 'refs');
          foreach($dirs as $dir)
          {
@@ -1921,20 +1927,24 @@ class JsonLdProcessor
                }
             }
 
-            // only keep non-canonically named bnodes
-            $tmp = $bnodes;
-            $bnodes = array();
-            foreach($tmp as $i => $b)
+            // only clear serializations if resorting is necessary
+            if($resort)
             {
-               $iriB = $b->{'@subject'}->{'@iri'};
-               if(!$c14n->inNamespace($iriB))
+               // only keep non-canonically named bnodes
+               $tmp = $bnodes;
+               $bnodes = array();
+               foreach($tmp as $i => $b)
                {
-                  // mark serializations related to the named bnodes as dirty
-                  foreach($renamed as $r)
+                  $iriB = $b->{'@subject'}->{'@iri'};
+                  if(!$c14n->inNamespace($iriB))
                   {
-                     $this->markSerializationDirty($iriB, $r, $dir);
+                     // mark serializations related to the named bnodes as dirty
+                     foreach($renamed as $r)
+                     {
+                        $this->markSerializationDirty($iriB, $r, $dir);
+                     }
+                     $bnodes[] = $b;
                   }
-                  $bnodes[] = $b;
                }
             }
          }
