@@ -1889,6 +1889,7 @@ class JsonLdProcessor
       {
          if($resort)
          {
+            $resort = false;
             usort($bnodes, array($this, 'deepCompareBlankNodes'));
          }
 
@@ -1927,24 +1928,24 @@ class JsonLdProcessor
                }
             }
 
-            // only clear serializations if resorting is necessary
-            if($resort)
+            // only keep non-canonically named bnodes
+            $tmp = $bnodes;
+            $bnodes = array();
+            foreach($tmp as $i => $b)
             {
-               // only keep non-canonically named bnodes
-               $tmp = $bnodes;
-               $bnodes = array();
-               foreach($tmp as $i => $b)
+               $iriB = $b->{'@subject'}->{'@iri'};
+               if(!$c14n->inNamespace($iriB))
                {
-                  $iriB = $b->{'@subject'}->{'@iri'};
-                  if(!$c14n->inNamespace($iriB))
+                  // mark serializations related to the named bnodes as dirty
+                  foreach($renamed as $r)
                   {
-                     // mark serializations related to the named bnodes as dirty
-                     foreach($renamed as $r)
+                     if($this->markSerializationDirty($iriB, $r, $dir))
                      {
-                        $this->markSerializationDirty($iriB, $r, $dir);
+                        // resort if a serialization was marked dirty
+                        $resort = true;
                      }
-                     $bnodes[] = $b;
                   }
+                  $bnodes[] = $b;
                }
             }
          }
@@ -1974,14 +1975,19 @@ class JsonLdProcessor
     * @param iri the IRI of the bnode to check.
     * @param changed the old IRI of the bnode that changed.
     * @param dir the direction to check ('props' or 'refs').
+    *
+    * @return true if the serialization was marked dirty, false if not.
     */
    public function markSerializationDirty($iri, $changed, $dir)
    {
+      $rval = false;
       $s = $this->serializations->$iri;
       if($s->$dir !== null and property_exists($s->$dir->m, $changed))
       {
          $s->$dir = null;
+         $rval = true;
       }
+      return $rval;
    }
 
    /**
