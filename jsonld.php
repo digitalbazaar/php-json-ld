@@ -231,7 +231,7 @@ function jsonld_frame($input, $frame, $options=null)
 
    // save frame context
    $ctx = null;
-   if(property_exists($frame, '@context'))
+   if(is_object($frame) and property_exists($frame, '@context'))
    {
       $ctx = _clone($frame->{'@context'});
 
@@ -2649,10 +2649,10 @@ function _subframe(
    // 1. The frame OR default option specifies @embed as ON, AND
    // 2. There is no existing embed OR it is an autoembed, AND
    //    autoembed mode is off.
-   $embedOn =
+   $embedOn = (
       ((property_exists($frame, '@embed') and $frame->{'@embed'}) or
       (!property_exists($frame, '@embed') and $options->defaults->embedOn)) and
-      ($embed === null or ($embed->autoembed and !$autoembed));
+      ($embed === null or ($embed->autoembed and !$autoembed)));
 
    if(!$embedOn)
    {
@@ -2668,9 +2668,26 @@ function _subframe(
          $embeds->{$iri} = $embed;
       }
       // replace the existing embed with a reference
-      else if($embed->{$parent} !== null)
+      else if($embed->parent !== null)
       {
-         $embed->{$parent}->{$embed->key} = $value->{'@subject'};
+         if(is_array($embed->parent->{$embed->key}))
+         {
+            $arrLen = count($embed->parent->{$embed->key});
+            for($i = 0; $i < $arrLen; ++$i)
+            {
+               $obj = $embed->parent->{$embed->key}[$i];
+               if(is_object($obj) and property_exists($obj, '@subject') and
+                  $obj['@iri'] === $iri)
+               {
+                  $embed->parent->{$embed->key}[$i] = $value->{'@subject'};
+                  break;
+               }
+            }
+         }
+         else
+         {
+            $embed->parent->{$embed->key} = $value->{'@subject'};
+         }
       }
 
       // update embed entry
@@ -2695,7 +2712,8 @@ function _subframe(
       }
 
       // iterate over keys in value
-      foreach($value as $key => $v)
+      $vars = get_object_vars($value);
+      foreach($vars as $key => $v)
       {
          // skip keywords and type
          if(strpos($key, '@') !== 0 and $key !== JSONLD_RDF_TYPE)
@@ -2875,7 +2893,16 @@ function _frame(
          }
          else
          {
-            $rval[] = $value;
+            // determine if value is a reference
+            $isRef = ($value !== null and is_object($value) and
+               property_exists($value, '@iri') and
+               property_exists($embeds, $value->{'@iri'}));
+
+            // push any value that isn't a parentless reference
+            if(!($parent === null and $isRef))
+            {
+               $rval[] = $value;
+            }
          }
       }
    }
