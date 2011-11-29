@@ -2623,6 +2623,26 @@ function _isDuckType($input, $frame)
 }
 
 /**
+ * Recursively removes dependent dangling embeds.
+ *
+ * @param iri the iri of the parent to remove embeds for.
+ * @param embeds the embeds map.
+ */
+function removeDependentEmbeds($iri, $embeds)
+{
+   $iris = get_object_vars($embeds);
+   foreach($iris as $i => $embed)
+   {
+      if($embed->parent !== null and
+         $embed->parent->{'@subject'}->{'@iri'} === $iri)
+      {
+         unset($embeds->$i);
+         removeDependentEmbeds($i, $embeds);
+      }
+   }
+}
+
+/**
  * Subframes a value.
  *
  * @param subjects a map of subjects in the graph.
@@ -2672,12 +2692,13 @@ function _subframe(
       {
          if(is_array($embed->parent->{$embed->key}))
          {
+            // find and replace embed in array
             $arrLen = count($embed->parent->{$embed->key});
             for($i = 0; $i < $arrLen; ++$i)
             {
                $obj = $embed->parent->{$embed->key}[$i];
                if(is_object($obj) and property_exists($obj, '@subject') and
-                  $obj['@iri'] === $iri)
+                  $obj->{'@subject'}->{'@iri'} === $iri)
                {
                   $embed->parent->{$embed->key}[$i] = $value->{'@subject'};
                   break;
@@ -2688,6 +2709,9 @@ function _subframe(
          {
             $embed->parent->{$embed->key} = $value->{'@subject'};
          }
+
+         // recursively remove any dependent dangling embeds
+         removeDependentEmbeds($iri, $embeds);
       }
 
       // update embed entry
