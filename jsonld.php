@@ -6,8 +6,6 @@
  *
  * Copyright (c) 2011 Digital Bazaar, Inc. All rights reserved.
  */
-define('JSONLD_RDF', 'http://www.w3.org/1999/02/22-rdf-syntax-ns#');
-define('JSONLD_RDF_TYPE', JSONLD_RDF . 'type');
 define('JSONLD_XSD', 'http://www.w3.org/2001/XMLSchema#');
 define('JSONLD_XSD_BOOLEAN', JSONLD_XSD . 'boolean');
 define('JSONLD_XSD_DOUBLE', JSONLD_XSD . 'double');
@@ -534,8 +532,8 @@ function _compactIri($ctx, $iri, $usedCtx)
       }
    }
 
-   // term not found, if term is rdf type, use built-in keyword
-   if($rval === null and $iri === JSONLD_RDF_TYPE)
+   // term not found, if term is @type, use keyword
+   if($rval === null and $iri === '@type')
    {
       $rval = _getKeywords($ctx)->{'@type'};
    }
@@ -625,15 +623,15 @@ function _expandTerm($ctx, $term, $usedCtx)
          $usedCtx->$term = $rval;
       }
    }
-   // 3. The property is the special-case subject.
+   // 3. The property is the special-case @subject.
    else if($term === $keywords->{'@subject'})
    {
-      $rval = $keywords->{'@subject'};
+      $rval = '@subject';
    }
-   // 4. The property is the special-case rdf type.
+   // 4. The property is the special-case @type.
    else if($term === $keywords->{'@type'})
    {
-      $rval = JSONLD_RDF_TYPE;
+      $rval = '@type';
    }
    // 5. The property is a relative IRI, prepend the default vocab.
    else
@@ -1692,7 +1690,7 @@ class JsonLdProcessor
       $p = _expandTerm($ctx, $property, null);
 
       // built-in type coercion JSON-LD-isms
-      if($p === '@subject' or $p === JSONLD_RDF_TYPE)
+      if($p === '@subject' or $p === '@type')
       {
          $rval = '@iri';
       }
@@ -2543,15 +2541,13 @@ function _isType($input, $frame)
    $rval = false;
 
    // check if type(s) are specified in frame and input
-   $type = JSONLD_RDF_TYPE;
-   if(property_exists($frame, JSONLD_RDF_TYPE) and
+   $type = '@type';
+   if(property_exists($frame, $type) and
       is_object($input) and property_exists($input, '@subject') and
-      property_exists($input, JSONLD_RDF_TYPE))
+      property_exists($input, $type))
    {
-      $tmp = is_array($input->{JSONLD_RDF_TYPE}) ?
-         $input->{JSONLD_RDF_TYPE} : array($input->{JSONLD_RDF_TYPE});
-      $types = is_array($frame->$type) ?
-         $frame->{JSONLD_RDF_TYPE} : array($frame->{JSONLD_RDF_TYPE});
+      $tmp = is_array($input->$type) ? $input->$type : array($input->$type);
+      $types = is_array($frame->$type) ? $frame->$type : array($frame->$type);
       $length = count($types);
       for($t = 0; $t < $length and !$rval; ++$t)
       {
@@ -2595,7 +2591,7 @@ function _isDuckType($input, $frame)
    $rval = false;
 
    // frame must not have a specific type
-   if(!property_exists($frame, JSONLD_RDF_TYPE))
+   if(!property_exists($frame, '@type'))
    {
       // get frame properties that must exist on input
       $props = array_filter(array_keys((array)$frame), '_filterNonKeywords');
@@ -2740,7 +2736,7 @@ function _subframe(
       foreach($vars as $key => $v)
       {
          // skip keywords and type
-         if(strpos($key, '@') !== 0 and $key !== JSONLD_RDF_TYPE)
+         if(strpos($key, '@') !== 0 and $key !== '@type')
          {
             // get the subframe if available
             if(property_exists($frame, $key))
@@ -2778,7 +2774,7 @@ function _subframe(
       foreach($frame as $key => $f)
       {
          // skip keywords, type query, and non-null keys in value
-         if(strpos($key, '@') !== 0 and $key !== JSONLD_RDF_TYPE and
+         if(strpos($key, '@') !== 0 and $key !== '@type' and
             (!property_exists($value, $key) || $value->{$key} === null))
          {
             // add empty array to value
