@@ -143,7 +143,7 @@ function jsonld_merge_contexts($ctx1, $ctx2)
             {
                if($mvalue === $value)
                {
-                  // FIXME: update related @coerce rules
+                  // FIXME: update related coerce rules
                   unset($merged->$mkey);
                   break;
                }
@@ -154,27 +154,7 @@ function jsonld_merge_contexts($ctx1, $ctx2)
       // merge contexts
       foreach($ctx2 as $key => $value)
       {
-         // skip @coerce, to be merged below
-         if($key !== '@coerce')
-         {
-            $merged->$key = _clone($value);
-         }
-      }
-
-      // merge @coerce
-      if(property_exists($ctx2, '@coerce'))
-      {
-         if(!property_exists($merged, '@coerce'))
-         {
-            $merged->{'@coerce'} = _clone($ctx2->{'@coerce'});
-         }
-         else
-         {
-            foreach($ctx2->{'@coerce'} as $p => $type)
-            {
-               $merged->{'@coerce'}->$p = $type;
-            }
-         }
+         $merged->$key = _clone($value);
       }
    }
 
@@ -183,7 +163,7 @@ function jsonld_merge_contexts($ctx1, $ctx2)
 
 /**
  * Expands a term into an absolute IRI. The term may be a regular term, a
- * CURIE, a relative IRI, or an absolute IRI. In any case, the associated
+ * prefix, a relative IRI, or an absolute IRI. In any case, the associated
  * absolute IRI will be returned.
  *
  * @param ctx the context to use.
@@ -197,14 +177,14 @@ function jsonld_expand_term($ctx, $term)
 }
 
 /**
- * Compacts an IRI into a term or CURIE if it can be. IRIs will not be
+ * Compacts an IRI into a term or prefix if it can be. IRIs will not be
  * compacted to relative IRIs if they match the given context's default
  * vocabulary.
  *
  * @param ctx the context to use.
  * @param iri the IRI to compact.
  *
- * @return the compacted IRI as a term or CURIE or the original IRI.
+ * @return the compacted IRI as a term or prefix or the original IRI.
  */
 function jsonld_compact_iri($ctx, $iri)
 {
@@ -497,7 +477,32 @@ function _clone($value)
 }
 
 /**
- * Compacts an IRI into a term or CURIE if it can be. IRIs will not be
+ * Gets the iri associated with a term.
+ *
+ * @param ctx the context.
+ * @param term the term.
+ *
+ * @return the iri or NULL.
+ */
+function _getTermIri($ctx, $term)
+{
+   $rval = null;
+   if(property_exists($ctx, $term))
+   {
+      if(is_string($ctx->$term))
+      {
+         $rval = $ctx->$term;
+      }
+      else if(is_object($ctx->$term) and property_exists($ctx->$term, '@iri'))
+      {
+         $rval = $ctx->$term->{'@iri'};
+      }
+   }
+   return $rval;
+}
+
+/**
+ * Compacts an IRI into a term or prefix if it can be. IRIs will not be
  * compacted to relative IRIs if they match the given context's default
  * vocabulary.
  *
@@ -505,26 +510,26 @@ function _clone($value)
  * @param iri the IRI to compact.
  * @param usedCtx a context to update if a value was used from "ctx".
  *
- * @return the compacted IRI as a term or CURIE or the original IRI.
+ * @return the compacted IRI as a term or prefix or the original IRI.
  */
 function _compactIri($ctx, $iri, $usedCtx)
 {
    $rval = null;
 
    // check the context for a term that could shorten the IRI
-   // (give preference to terms over CURIEs)
+   // (give preference to terms over prefixes)
    foreach($ctx as $key => $value)
    {
       // skip special context keys (start with '@')
       if(strlen($key) > 0 and $key[0] !== '@')
       {
          // compact to a term
-         if($iri === $ctx->$key)
+         if($iri === _getTermIri($ctx, $key))
          {
             $rval = $key;
             if($usedCtx !== null)
             {
-               $usedCtx->$key = $ctx->$key;
+               $usedCtx->$key = _clone($ctx->$key);
             }
             break;
          }
@@ -537,7 +542,7 @@ function _compactIri($ctx, $iri, $usedCtx)
       $rval = _getKeywords($ctx)->{'@type'};
    }
 
-   // term not found, check the context for a CURIE prefix
+   // term not found, check the context for a prefix
    if($rval === null)
    {
       foreach($ctx as $key => $value)
@@ -546,18 +551,21 @@ function _compactIri($ctx, $iri, $usedCtx)
          if(strlen($key) > 0 and $key[0] !== '@')
          {
             // see if IRI begins with the next IRI from the context
-            $ctxIri = $ctx->$key;
-            $idx = strpos($iri, $ctxIri);
-
-            // compact to a CURIE
-            if($idx === 0 and strlen($iri) > strlen($ctxIri))
+            $ctxIri = _getTermIri($ctx, $key);
+            if($ctxIri !== null)
             {
-               $rval = $key . ':' . substr($iri, strlen($ctxIri));
-               if($usedCtx !== null)
+               $idx = strpos($iri, $ctxIri);
+
+               // compact to a prefix
+               if($idx === 0 and strlen($iri) > strlen($ctxIri))
                {
-                  $usedCtx->$key = $ctxIri;
+                  $rval = $key . ':' . substr($iri, strlen($ctxIri));
+                  if($usedCtx !== null)
+                  {
+                     $usedCtx->$key = _clone($ctx->$key);
+                  }
+                  break;
                }
-               break;
             }
          }
       }
@@ -574,7 +582,7 @@ function _compactIri($ctx, $iri, $usedCtx)
 
 /**
  * Expands a term into an absolute IRI. The term may be a regular term, a
- * CURIE, a relative IRI, or an absolute IRI. In any case, the associated
+ * prefix, a relative IRI, or an absolute IRI. In any case, the associated
  * absolute IRI will be returned.
  *
  * @param ctx the context to use.
@@ -590,21 +598,22 @@ function _expandTerm($ctx, $term, $usedCtx)
    // get JSON-LD keywords
    $keywords = _getKeywords($ctx);
 
-   // 1. If the property has a colon, then it is a CURIE or an absolute IRI:
+   // 1. If the property has a colon, it is a prefix or an absolute IRI:
    $idx = strpos($term, ':');
    if($idx !== false)
    {
-      // get the potential CURIE prefix
+      // get the potential prefix
       $prefix = substr($term, 0, $idx);
 
       // 1.1. See if the prefix is in the context:
       if(property_exists($ctx, $prefix))
       {
          // prefix found, expand property to absolute IRI
-         $rval = $ctx->$prefix . substr($term, $idx + 1);
+         $iri = _getTermIri($ctx, $prefix);
+         $rval = $iri . substr($term, $idx + 1);
          if($usedCtx !== null)
          {
-            $usedCtx->$prefix = $ctx->$prefix;
+            $usedCtx->$prefix = _clone($ctx->$prefix);
          }
       }
       // 1.2. Prefix is not in context, property is already an absolute IRI:
@@ -616,10 +625,10 @@ function _expandTerm($ctx, $term, $usedCtx)
    // 2. If the property is in the context, then it's a term.
    else if(property_exists($ctx, $term))
    {
-      $rval = $ctx->$term;
+      $rval = _getTermIri($ctx, $term);
       if($usedCtx !== null)
       {
-         $usedCtx->$term = $rval;
+         $usedCtx->$term = _clone($ctx->$term);
       }
    }
    // 3. The property is the special-case @subject.
@@ -1271,8 +1280,8 @@ class JsonLdProcessor
    }
 
    /**
-    * Recursively compacts a value. This method will compact IRIs to CURIEs or
-    * terms and do reverse type coercion to compact a value.
+    * Recursively compacts a value. This method will compact IRIs to prefixes
+    * or terms and do reverse type coercion to compact a value.
     *
     * @param ctx the context to use.
     * @param property the property that points to the value, NULL for none.
@@ -1693,23 +1702,19 @@ class JsonLdProcessor
       {
          $rval = '@iri';
       }
-      // check type coercion for property
-      else if(property_exists($ctx, '@coerce'))
+      else
       {
          // look up compacted property in coercion map
          $p = _compactIri($ctx, $p, null);
-         if(property_exists($ctx->{'@coerce'}, $p))
+         if(property_exists($ctx, $p) and is_object($ctx->$p) and
+            property_exists($ctx->$p, '@type'))
          {
             // property found, return expanded type
-            $type = $ctx->{'@coerce'}->$p;
+            $type = $ctx->$p->{'@type'};
             $rval = _expandTerm($ctx, $type, $usedCtx);
             if($usedCtx !== null)
             {
-               if(!property_exists($usedCtx, '@coerce'))
-               {
-                  $usedCtx->{'@coerce'} = new stdClass();
-               }
-               $usedCtx->{'@coerce'}->$p = $type;
+               $usedCtx->$p = _clone($ctx->$p);
             }
          }
       }
