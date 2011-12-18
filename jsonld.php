@@ -402,7 +402,6 @@ function _getKeywords($ctx)
    // state
 
    $rval = (object)array(
-      '@datatype' => '@datatype',
       '@iri' => '@iri',
       '@language' => '@language',
       '@literal' => '@literal',
@@ -767,7 +766,7 @@ function _compareObjects($o1, $o2)
       {
          if(property_exists($o1, '@literal'))
          {
-            $rval = _compareObjectKeys($o1, $o2, '@datatype');
+            $rval = _compareObjectKeys($o1, $o2, '@type');
             if($rval === 0)
             {
                $rval = _compareObjectKeys($o1, $o2, '@language');
@@ -818,7 +817,7 @@ function _compareBlankNodeObjects($a, $b)
    3.2.3. The bnode with the alphabetically-first string is first.
    3.2.4. The bnode with a @literal is first.
    3.2.5. The bnode with the alphabetically-first @literal is first.
-   3.2.6. The bnode with the alphabetically-first @datatype is first.
+   3.2.6. The bnode with the alphabetically-first @type is first.
    3.2.7. The bnode with a @language is first.
    3.2.8. The bnode with the alphabetically-first @language is first.
    3.2.9. The bnode with the alphabetically-first @iri is first.
@@ -1348,12 +1347,12 @@ class JsonLdProcessor
             // type coercion can only occur if language is not specified
             if(!property_exists($value, '@language'))
             {
-               // datatype must match coerce type if specified
-               if(property_exists($value, '@datatype'))
+               // type must match coerce type if specified
+               if(property_exists($value, '@type'))
                {
-                  $type = $value->{'@datatype'};
+                  $type = $value->{'@type'};
                }
-               // datatype is IRI
+               // type is IRI
                else if(property_exists($value, '@iri'))
                {
                   $type = '@iri';
@@ -1394,7 +1393,7 @@ class JsonLdProcessor
             else if($type !== $coerce)
             {
                throw new Exception(
-                  'Cannot coerce type because the datatype does not match.');
+                  'Cannot coerce type because the type does not match.');
             }
             // do reverse type-coercion
             else
@@ -1548,9 +1547,9 @@ class JsonLdProcessor
                {
                   $rval->{'@language'} = $value->{$keywords->{'@language'}};
                }
-               else if(property_exists($value, $keywords->{'@datatype'}))
+               else if(property_exists($value, $keywords->{'@type'}))
                {
-                  $rval->{'@datatype'} = $value->{$keywords->{'@datatype'}};
+                  $rval->{'@type'} = $value->{$keywords->{'@type'}};
                }
             }
          }
@@ -1581,7 +1580,7 @@ class JsonLdProcessor
             }
          }
 
-         // coerce to appropriate datatype, only expand subjects if requested
+         // coerce to appropriate type, only expand subjects if requested
          if($coerce !== null and (
             $property !== $keywords->{'@subject'} or $expandSubjects))
          {
@@ -1592,10 +1591,10 @@ class JsonLdProcessor
             {
                $rval->{'@iri'} = _expandTerm($ctx, $value, null);
             }
-            // other datatype
+            // other type
             else
             {
-               $rval->{'@datatype'} = $coerce;
+               $rval->{'@type'} = $coerce;
                if($coerce === JSONLD_XSD_DOUBLE)
                {
                   // do special JSON-LD double format
@@ -2040,10 +2039,10 @@ class JsonLdProcessor
                   {
                      $rval .= '"' . $obj->{'@literal'} . '"';
 
-                     // datatype literal
-                     if(property_exists($obj, '@datatype'))
+                     // type literal
+                     if(property_exists($obj, '@type'))
                      {
-                        $rval .= '^^<' . $obj->{'@datatype'} . '>';
+                        $rval .= '^^<' . $obj->{'@type'} . '>';
                      }
                      // language literal
                      else if(property_exists($obj, '@language'))
