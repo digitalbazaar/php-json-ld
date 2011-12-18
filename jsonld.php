@@ -2735,8 +2735,8 @@ function _subframe(
       $vars = get_object_vars($value);
       foreach($vars as $key => $v)
       {
-         // skip keywords and type
-         if(strpos($key, '@') !== 0 and $key !== '@type')
+         // skip keywords
+         if(strpos($key, '@') !== 0)
          {
             // get the subframe if available
             if(property_exists($frame, $key))
@@ -2773,8 +2773,8 @@ function _subframe(
       // iterate over frame keys to add any missing values
       foreach($frame as $key => $f)
       {
-         // skip keywords, type query, and non-null keys in value
-         if(strpos($key, '@') !== 0 and $key !== '@type' and
+         // skip keywords and non-null keys in value
+         if(strpos($key, '@') !== 0 and
             (!property_exists($value, $key) || $value->{$key} === null))
          {
             // add empty array to value
