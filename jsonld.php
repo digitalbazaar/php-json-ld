@@ -1477,11 +1477,10 @@ class JsonLdProcessor
     * @param ctx the context.
     * @param property the property that points to the value, NULL for none.
     * @param value the value to expand.
-    * @param expandSubjects true to expand subjects (normalize), false not to.
     *
     * @return the expanded value.
     */
-   public function expand($ctx, $property, $value, $expandSubjects)
+   public function expand($ctx, $property, $value)
    {
       $rval;
 
@@ -1504,7 +1503,7 @@ class JsonLdProcessor
          $rval = array();
          foreach($value as $v)
          {
-            $rval[] = $this->expand($ctx, $property, $v, $expandSubjects);
+            $rval[] = $this->expand($ctx, $property, $v);
          }
       }
       else if(is_object($value))
@@ -1537,7 +1536,7 @@ class JsonLdProcessor
                   // set object to expanded property
                   _setProperty(
                      $rval, _expandTerm($ctx, $key, null),
-                     $this->expand($ctx, $key, $v, $expandSubjects));
+                     $this->expand($ctx, $key, $v));
                }
             }
          }
@@ -1589,9 +1588,8 @@ class JsonLdProcessor
             }
          }
 
-         // coerce to appropriate type, only expand subjects if requested
-         if($coerce !== null and (
-            $property !== $keywords->{'@subject'} or $expandSubjects))
+         // coerce to appropriate type (do not expand subjects)
+         if($coerce !== null and $property !== $keywords->{'@subject'})
          {
             $rval = new stdClass();
 
