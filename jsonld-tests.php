@@ -4,7 +4,7 @@
  *
  * @author Dave Longley
  *
- * Copyright (c) 2011 Digital Bazaar, Inc. All rights reserved.
+ * Copyright (c) 2011-2012 Digital Bazaar, Inc. All rights reserved.
  */
 require_once('jsonld.php');
 
@@ -192,11 +192,11 @@ class TestRunner
    public function load($filepath)
    {
       global $eol;
-      $tests = array();
+      $manifests = array();
 
       // get full path
       $filepath = realpath($filepath);
-      echo "Reading test files from: '$filepath'$eol";
+      echo "Reading manifest files from: '$filepath'$eol";
 
       // read each test file from the directory
       $files = array();
@@ -220,13 +220,15 @@ class TestRunner
       foreach($files as $file)
       {
          $info = pathinfo($file);
-         if($info['extension'] == 'test')
+         // FIXME: hackish, manifests are now JSON-LD
+         if(strstr($info['basename'], 'manifest') !== false and
+            $info['extension'] == 'jsonld')
          {
-            echo "Reading test file: '$file'$eol";
+            echo "Reading manifest file: '$file'$eol";
 
             try
             {
-               $test = json_decode(file_get_contents($file));
+               $manifest = json_decode(file_get_contents($file));
             }
             catch(Exception $e)
             {
@@ -234,108 +236,80 @@ class TestRunner
                throw $e;
             }
 
-            if(!isset($test->filepath))
-            {
-               $test->filepath = $filepath;
-            }
-            $tests[] = $test;
+            $manifest->filepath = $filepath;
+            $manifests[] = $manifest;
          }
       }
 
-      echo count($tests) . " test file(s) read.$eol";
+      echo count($manifests) . " manifest file(s) read.$eol";
 
-      return $tests;
+      return $manifests;
    }
 
-   public function run($tests, $filepath='jsonld')
+   public function run($manifests)
    {
-      /* Test format:
+      /* Manifest format:
          {
-            group: <optional group name>,
-            tests: [{
+            name: <optional manifest name>,
+            sequence: [{
                'name': <test name>,
-               'type': <type of test>,
+               '@type': ["test:TestCase", "jld:<type of test>"],
                'input': <input file for test>,
                'context': <context file for add context test type>,
                'frame': <frame file for frame test type>,
                'expect': <expected result file>,
             }]
          }
-
-         If 'group' is present, then 'tests' must be present and list all of the
-         tests in the group. If 'group' is not present then 'name' must be present
-         as well as 'input' and 'expect'. Groups may be embedded.
        */
-
       global $eol;
 
-      foreach($tests as $test)
+      foreach($manifests as $manifest)
       {
-         if(isset($test->group))
+         $this->group($manifest->name);
+         $filepath = $manifest->filepath;
+
+         foreach($manifest->sequence as $test)
          {
-            $this->group($test->group);
-            $this->run($test->tests, $test->filepath);
-            $this->ungroup();
-         }
-         else if(!isset($test->name))
-         {
-            throw new Exception(
-               '"group" or "name" must be specified in test file.');
-         }
-         else
-         {
-            $this->test($test->name);
-
-            $type = $test->type;
-
-            if($type === 'triples')
+            // read test input files
+            $indent = 2;
+            $type = $test->{'@type'};
+            if(in_array('jld:NormalizeTest', $type))
             {
-               echo "SKIP$eol";
-               continue;
+               $indent = 0;
+               $input = _readTestJson($test->input, $filepath);
+               $test->expect = _readTestJson($test->expect, $filepath);
+               $result = jsonld_normalize($input);
             }
-
-            // use parent test filepath as necessary
-            if(!isset($test->filepath))
+            else if(in_array('jld:ExpandTest', $type))
             {
-               $test->filepath = realpath($filepath);
+               $input = _readTestJson($test->input, $filepath);
+               $test->expect = _readTestJson($test->expect, $filepath);
+               $result = jsonld_expand($input);
             }
-
-            // read test files
-            $input = _readTestJson($test->input, $test->filepath);
-            $test->expect = _readTestJson($test->expect, $test->filepath);
-            if(isset($test->context))
+            else if(in_array('jld:CompactTest', $type))
             {
-               $test->context = _readTestJson($test->context, $test->filepath);
+               $input = _readTestJson($test->input, $filepath);
+               $test->context = _readTestJson($test->context, $filepath);
+               $test->expect = _readTestJson($test->expect, $filepath);
+               $result = jsonld_compact($test->context->{'@context'}, $input);
             }
-            if(isset($test->frame))
+            else if(in_array('jld:FrameTest', $type))
             {
-               $test->frame = _readTestJson($test->frame, $test->filepath);
-            }
-
-            // perform test
-            if($type === 'normalize')
-            {
-               $input = jsonld_normalize($input);
-            }
-            else if($type === 'expand')
-            {
-               $input = jsonld_expand($input);
-            }
-            else if($type === 'compact')
-            {
-               $input = jsonld_compact($test->context, $input);
-            }
-            else if($type === 'frame')
-            {
-               $input = jsonld_frame($input, $test->frame);
+               $input = _readTestJson($test->input, $filepath);
+               $test->frame = _readTestJson($test->frame, $filepath);
+               $test->expect = _readTestJson($test->expect, $filepath);
+               $result = jsonld_frame($input, $test->frame);
             }
             else
             {
-               throw new Exception("Unknown test type: '$type'");
+               echo 'Skipping test "' . $test->name . '" of type: ' .
+                  json_encode($type) . $eol;
+               continue;
             }
 
             // check results (only indent output on non-normalize tests)
-            $this->check($test->expect, $input, $test->type !== 'normalize');
+            $this->test($test->name);
+            $this->check($test->expect, $result, $indent);
          }
       }
    }

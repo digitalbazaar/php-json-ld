@@ -58,44 +58,34 @@ function jsonld_compact($ctx, $input)
       // fully expand input
       $input = jsonld_expand($input);
 
-      if(is_array($input))
-      {
-         $rval = array();
-         $tmp = $input;
-      }
-      else
-      {
-         $tmp = array($input);
-      }
-
       // merge context if it is an array
       if(is_array($ctx))
       {
          $ctx = jsonld_merge_contexts(new stdClass, $ctx);
       }
 
-      foreach($tmp as $value)
+      // setup output context
+      $ctxOut = new stdClass();
+
+      // compact
+      $p = new JsonLdProcessor();
+      $rval = $out = $p->compact(_clone($ctx), null, $input, $ctxOut);
+
+      // add context if used
+      if(count(array_keys((array)$ctxOut)) > 0)
       {
-         // setup output context
-         $ctxOut = new stdClass();
-
-         // compact
-         $p = new JsonLdProcessor();
-         $out = $p->compact(_clone($ctx), null, $value, $ctxOut);
-
-         // add context if used
-         if(count(array_keys((array)$ctxOut)) > 0)
+         $rval = new stdClass();
+         $rval->{'@context'} = $ctxOut;
+         if(is_array($out))
          {
-            $out->{'@context'} = $ctxOut;
-         }
-
-         if($rval === null)
-         {
-            $rval = $out;
+            $rval->{_getKeywords($ctxOut)->{'@id'}} = $out;
          }
          else
          {
-            $rval[] = $out;
+            foreach($out as $k => $v)
+            {
+               $rval->{$k} = $v;
+            }
          }
       }
    }
@@ -255,7 +245,20 @@ function jsonld_frame($input, $frame, $options=null)
    // apply context
    if($ctx !== null and $rval !== null)
    {
-      $rval = jsonld_compact($ctx, $rval);
+      // preserve top-level array by compacting individual entries
+      if(is_array($rval))
+      {
+         $tmp = $rval;
+         $rval = array();
+         foreach($tmp as $value)
+         {
+            $rval[] = jsonld_compact($ctx, $value);
+         }
+      }
+      else
+      {
+         $rval = jsonld_compact($ctx, $rval);
+      }
    }
 
    return $rval;
@@ -384,7 +387,7 @@ function _getKeywords($ctx)
    $rval = (object)array(
       '@id' => '@id',
       '@language' => '@language',
-      '@literal' => '@literal',
+      '@value' => '@value',
       '@type' => '@type'
    );
 
@@ -674,10 +677,10 @@ function _isSubject($value)
 
    // Note: A value is a subject if all of these hold true:
    // 1. It is an Object.
-   // 2. It is not a literal.
+   // 2. It is not a literal (@value).
    // 3. It has more than 1 key OR any existing key is not '@id'.
    if($value !== null and is_object($value) and
-      !property_exists($value, '@literal'))
+      !property_exists($value, '@value'))
    {
       $keyCount = count(get_object_vars($value));
       $rval = ($keyCount > 1 or !property_exists($value, '@id'));
@@ -796,10 +799,10 @@ function _compareObjects($o1, $o2)
    }
    else
    {
-      $rval = _compareObjectKeys($o1, $o2, '@literal');
+      $rval = _compareObjectKeys($o1, $o2, '@value');
       if($rval === 0)
       {
-         if(property_exists($o1, '@literal'))
+         if(property_exists($o1, '@value'))
          {
             $rval = _compareObjectKeys($o1, $o2, '@type');
             if($rval === 0)
@@ -845,12 +848,12 @@ function _compareBlankNodeObjects($a, $b)
    /*
    3. For each property, compare sorted object values.
    3.1. The bnode with fewer objects is first.
-   3.2. For each object value, compare only literals and non-bnodes.
+   3.2. For each object value, compare only literals (@values) and non-bnodes.
    3.2.1.  The bnode with fewer non-bnodes is first.
    3.2.2. The bnode with a string object is first.
    3.2.3. The bnode with the alphabetically-first string is first.
-   3.2.4. The bnode with a @literal is first.
-   3.2.5. The bnode with the alphabetically-first @literal is first.
+   3.2.4. The bnode with a @value is first.
+   3.2.5. The bnode with the alphabetically-first @value is first.
    3.2.6. The bnode with the alphabetically-first @type is first.
    3.2.7. The bnode with a @language is first.
    3.2.8. The bnode with the alphabetically-first @language is first.
@@ -1031,7 +1034,7 @@ function _flatten($parent, $parentProperty, $value, $subjects)
    else if(is_object($value))
    {
       // already-expanded value or special-case reference-only @type
-      if(property_exists($value, '@literal') or $parentProperty === '@type')
+      if(property_exists($value, '@value') or $parentProperty === '@type')
       {
          $flattened = _clone($value);
       }
@@ -1427,9 +1430,9 @@ class JsonLdProcessor
                   {
                      $rval = $value->{'@id'};
                   }
-                  else if(property_exists($value, '@literal'))
+                  else if(property_exists($value, '@value'))
                   {
-                     $rval = $value->{'@literal'};
+                     $rval = $value->{'@value'};
                   }
                }
                else
@@ -1604,7 +1607,7 @@ class JsonLdProcessor
                {
                   $value = $value ? 'true' : 'false';
                }
-               $rval->{'@literal'} = '' . $value;
+               $rval->{'@value'} = '' . $value;
             }
          }
          // nothing to coerce
@@ -2030,7 +2033,7 @@ class JsonLdProcessor
                   // literal
                   else
                   {
-                     $rval .= '"' . $obj->{'@literal'} . '"';
+                     $rval .= '"' . $obj->{'@value'} . '"';
 
                      // type literal
                      if(property_exists($obj, '@type'))
