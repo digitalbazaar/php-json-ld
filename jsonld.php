@@ -4,7 +4,7 @@
  *
  * @author Dave Longley
  *
- * Copyright (c) 2011 Digital Bazaar, Inc. All rights reserved.
+ * Copyright (c) 2011-2012 Digital Bazaar, Inc. All rights reserved.
  */
 define('JSONLD_XSD', 'http://www.w3.org/2001/XMLSchema#');
 define('JSONLD_XSD_BOOLEAN', JSONLD_XSD . 'boolean');
@@ -1574,8 +1574,8 @@ class JsonLdProcessor
          }
 
          // special-case expand @id and @type (skips '@id' expansion)
-         if($property === $keywords->{'@id'} or
-            $property === $keywords->{'@type'})
+         if($property === '@id' or $property === $keywords->{'@id'} or
+            $property === '@type' or $property === $keywords->{'@type'})
          {
             $rval = _expandTerm($ctx, $value, null);
          }
