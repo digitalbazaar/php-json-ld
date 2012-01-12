@@ -538,10 +538,18 @@ function _compactIri($ctx, $iri, $usedCtx)
       }
    }
 
-   // term not found, if term is @type, use keyword
-   if($rval === null and $iri === '@type')
+   // term not found, if term is keyword, use alias
+   if($rval === null)
    {
-      $rval = _getKeywords($ctx)->{'@type'};
+      $keywords = _getKeywords($ctx);
+      if(property_exists($keywords, $iri))
+      {
+         $rval = $keywords->{$iri};
+         if($rval !== $iri and $usedCtx !== null)
+         {
+            $usedCtx->$rval = $iri;
+         }
+      }
    }
 
    // term not found, check the context for a prefix
