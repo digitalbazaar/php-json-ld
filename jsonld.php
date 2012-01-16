@@ -997,19 +997,18 @@ function _collectSubjects($input, $subjects, $bnodes)
 }
 
 /**
- * Filters duplicate IRIs.
+ * Filters duplicate objects.
  */
-class DuplicateIriFilter
+class DuplicateFilter
 {
-   public function __construct($iri)
+   public function __construct($obj)
    {
-      $this->iri = $iri;
+      $this->obj = $obj;
    }
 
    public function filter($e)
    {
-      return (is_object($e) and property_exists($e, '@id') and
-         $e->{'@id'} === $this->iri);
+      return (_compareObjects($e, $this->obj) === 0);
    }
 }
 
@@ -1126,13 +1125,9 @@ function _flatten($parent, $parentProperty, $value, $subjects)
       if($parent instanceof ArrayObject)
       {
          // do not add duplicate IRIs for the same property
-         $duplicate = false;
-         if(is_object($flattened) and property_exists($flattened, '@id'))
-         {
-            $duplicate = count(array_filter(
-               (array)$parent, array(
-                  new DuplicateIriFilter($flattened->{'@id'}), 'filter'))) > 0;
-         }
+         $duplicate = count(array_filter(
+            (array)$parent, array(
+               new DuplicateFilter($flattened), 'filter'))) > 0;
          if(!$duplicate)
          {
             $parent[] = $flattened;
