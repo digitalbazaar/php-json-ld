@@ -298,7 +298,7 @@ function jsonld_resolve($input, $resolver)
          if($tmp === null)
          {
             throw new Exception(
-               'Could not resolve @context URL ("$url"), ' .
+               "Could not resolve @context URL ('$url'), " .
                'malformed JSON detected.');
          }
          $urls[$url] = $tmp->{'@context'};
