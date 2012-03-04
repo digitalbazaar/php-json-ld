@@ -1950,16 +1950,13 @@ class JsonLdProcessor
       // sort property lists that now have canonically-named bnodes
       foreach($edges->props as $key => $value)
       {
-         if(count($value->bnodes) > 0)
+         $subject = $subjects->$key;
+         foreach($subject as $p => $v)
          {
-            $bnode = $subjects->$key;
-            foreach($bnode as $p => $v)
+            if(strpos($p, '@id') !== 0 and is_array($v))
             {
-               if(strpos($p, '@') !== 0 and is_array($v))
-               {
-                  usort($v, '_compareObjects');
-                  $bnode->$p = $v;
-               }
+               usort($v, '_compareObjects');
+               $subject->$p = $v;
             }
          }
       }
