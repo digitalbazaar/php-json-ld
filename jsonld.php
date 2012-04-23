@@ -1210,8 +1210,7 @@ class JsonLdProcessor {
       $hashes = array_keys((array)$unique);
       sort($hashes);
       foreach($hashes as $hash) {
-        $bnode = $unique->{$hash};
-        $namer->getName($bnode);
+        $namer->getName($unique->{$hash});
       }
     }
     while(count($unnamed) > count($nextUnnamed));
@@ -1256,8 +1255,7 @@ class JsonLdProcessor {
     // add all bnodes
     foreach($bnodes as $id => $statements) {
       // add all property statements to bnode
-      $name = $namer->getName($id);
-      $bnode = (object)array('@id' => $name);
+      $bnode = (object)array('@id' => $namer->getName($id));
       foreach($statements as $statement) {
         if($statement->s === '_:a') {
           $z = $this->_getBlankNodeName($statement->o);
@@ -1671,8 +1669,6 @@ class JsonLdProcessor {
     $groups = new stdClass();
     $cache = new stdClass();
     foreach($statements as $statement) {
-      $bnode = null;
-      $direction = null;
       if($statement->s !== '_:a' && strpos($statement->s, '_:') === 0) {
         $bnode = $statement->s;
         $direction = 'p';
@@ -1757,7 +1753,7 @@ class JsonLdProcessor {
         }
 
         // recurse
-        if($skipped) {
+        if(!$skipped) {
           foreach($recurse as $bnode) {
             $result = $this->_hashPaths(
               $bnodes, $bnodes->{$bnode}, $namer, $path_namer_copy);
@@ -1767,7 +1763,7 @@ class JsonLdProcessor {
 
             // skip permutation if path is already >= chosen path
             if($chosen_path !== null && strlen($path) >= strlen($chosen_path) &&
-              $path > $chosenPath) {
+              $path > $chosen_path) {
               $skipped = true;
               break;
             }
@@ -3295,6 +3291,7 @@ class UniqueNamer {
     // save mapping
     if($old_name !== null) {
       $this->existing->{$old_name} = $name;
+      $this->order[] = $old_name;
     }
 
     return $name;
