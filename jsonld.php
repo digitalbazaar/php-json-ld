@@ -236,7 +236,7 @@ class JsonLdProcessor {
     if($has_context || $options['graph']) {
       if(is_array($compacted)) {
         // use '@graph' keyword
-        $kwgraph =$this->_compactIri($active_ctx, '@graph');
+        $kwgraph = $this->_compactIri($active_ctx, '@graph');
         $graph = $compacted;
         $compacted = new stdClass();
         if($hasContext) {
@@ -398,7 +398,7 @@ class JsonLdProcessor {
     }
 
     // do normalization
-    $this->_normalize($expanded);
+    return $this->_normalize($expanded);
   }
 
   /**
@@ -885,7 +885,7 @@ class JsonLdProcessor {
 
         // preserve empty arrays
         if(count($value) === 0) {
-          $prop =$this->_compactIri($ctx, $key);
+          $prop = $this->_compactIri($ctx, $key);
           self::addValue($rval, $prop, array(), true);
         }
 
@@ -1063,8 +1063,7 @@ class JsonLdProcessor {
             $container = self::getContextValue($ctx, $property, '@container');
             if($container === '@list') {
               // ensure value is an array
-              $value = self::arrayify();
-              $value = (object)array('@list' => $value);
+              $value = (object)array('@list' => self::arrayify($value));
             }
           }
 
@@ -1155,7 +1154,8 @@ class JsonLdProcessor {
 
     // frame the subjects
     $framed = new ArrayObject();
-    $this->_match_frame($state, $state->subjects, $frame, $framed, null);
+    $this->_match_frame(
+      $state, array_keys((array)$state->subjects), $frame, $framed, null);
     return (array)$framed;
   }
 
@@ -1178,10 +1178,10 @@ class JsonLdProcessor {
 
     // continue to hash bnode statements while bnodes are assigned names
     $unnamed = null;
-    $nextUnnamed = get_object_vars($bnodes);
+    $nextUnnamed = array_keys((array)$bnodes);
     $duplicates = null;
     do {
-      $unnamed = nextUnnamed;
+      $unnamed = $nextUnnamed;
       $nextUnnamed = array();
       $duplicates = new stdClass();
       $unique = new stdClass();
@@ -1191,7 +1191,7 @@ class JsonLdProcessor {
         $hash = $this->_hashStatements($statements, $namer);
 
         // store hash as unique or a duplicate
-        if(property_exists($duplicate, $hash)) {
+        if(property_exists($duplicates, $hash)) {
           $duplicates->{$hash}[] = $bnode;
           $nextUnnamed[] = $bnode;
         }
@@ -1207,7 +1207,7 @@ class JsonLdProcessor {
       }
 
       // name unique bnodes in sorted hash order
-      $hashes = get_object_vars($unique);
+      $hashes = array_keys((array)$unique);
       sort($hashes);
       foreach($hashes as $hash) {
         $bnode = $unique->{$hash};
@@ -1217,7 +1217,7 @@ class JsonLdProcessor {
     while(count($unnamed) > count($nextUnnamed));
 
     // enumerate duplicate hash groups in sorted order
-    $hashes = get_object_vars($duplicates);
+    $hashes = array_keys((array)$duplicates);
     sort($hashes);
     foreach($hashes as $hash) {
       // process group
@@ -1261,7 +1261,7 @@ class JsonLdProcessor {
       foreach($statements as $statement) {
         if($statement->s === '_:a') {
           $z = $this->_getBlankNodeName($statement->o);
-          $o = $z ? (object)array('@id' => $namer.getName($z)) : $statement->o;
+          $o = $z ? (object)array('@id' => $namer->getName($z)) : $statement->o;
           self::addValue($bnode, $statement->p, $o, true);
         }
       }
@@ -1274,7 +1274,7 @@ class JsonLdProcessor {
       $subject = (object)array('@id' => $id);
       foreach($statements as $statement) {
         $z = $this->_getBlankNodeName($statement->o);
-        $o = $z ? (object)array('@id' => $namer.getName($z)) : $statement->o;
+        $o = $z ? (object)array('@id' => $namer->getName($z)) : $statement->o;
         self::addValue($subject, $statement->p, $o, true);
       }
       $output[] = $subject;
@@ -1389,7 +1389,7 @@ class JsonLdProcessor {
         $language = self::getContextValue($ctx, $property, '@language');
         if($language !== null) {
           $rval = (object)array(
-            '@value' => strval(value), '@language' => $language);
+            '@value' => strval($value), '@language' => $language);
         }
       }
     }
@@ -1466,7 +1466,8 @@ class JsonLdProcessor {
           // convert boolean to @value
           if(is_bool($o)) {
             $o = (object)array(
-              '@value' => strval($o), '@type' => self::XSD_BOOLEAN);
+              '@value' => ($o ? 'true' : 'false'),
+              '@type' => self::XSD_BOOLEAN);
           }
           // convert double to @value
           else if(is_double($o)) {
@@ -1484,14 +1485,15 @@ class JsonLdProcessor {
           // object is a blank node
           if(self::_isBlankNode($o)) {
             // name object position blank node
-            $o_name = $namer->getName($o->{'@id'});
+            $o_name = property_exists($o, '@id') ? $o->{'@id'} : null;
+            $o_name = $namer->getName($o_name);
 
             // add property statement
             $this->_addStatement($entries, (object)array(
               's' => $s, 'p' => $p, 'o' => (object)array('@id' => $o_name)));
 
             // add reference statement
-            if(!property_exists($bnodes, $name)) {
+            if(!property_exists($bnodes, $o_name)) {
               $o_entries = $bnodes->{$o_name} = new ArrayObject();
             }
             else {
@@ -1513,8 +1515,8 @@ class JsonLdProcessor {
 
             // ensure a subject entry exists for subject reference
             if(self::_isSubjectReference($o) &&
-              !property_exists($subjects, $name)) {
-              $subjects->{$name} = new ArrayObject();
+              !property_exists($subjects, $o->{'@id'})) {
+              $subjects->{$o->{'@id'}} = new ArrayObject();
             }
           }
           // object must be an embedded subject
@@ -1628,7 +1630,7 @@ class JsonLdProcessor {
         $triple .= '"' . $statement->o->{'@value'} . '"';
 
         if(property_exists($statement->o, '@type')) {
-          $triple .= '^^<' . $statement->o['@type'] . '>';
+          $triple .= '^^<' . $statement->o->{'@type'} . '>';
         }
         else if(property_exists($statement->o, '@language')) {
           $triple .= '@' . $statement->o{'@language'};
@@ -1667,6 +1669,7 @@ class JsonLdProcessor {
 
     // group adjacent bnodes by hash, keep properties and references separate
     $groups = new stdClass();
+    $cache = new stdClass();
     foreach($statements as $statement) {
       $bnode = null;
       $direction = null;
@@ -1714,7 +1717,7 @@ class JsonLdProcessor {
     }
 
     // iterate over groups in sorted hash order
-    $group_hashes = get_object_vars($groups);
+    $group_hashes = array_keys((array)$groups);
     sort($group_hashes);
     foreach($group_hashes as $group_hash) {
       // digest group hash
@@ -1872,7 +1875,7 @@ class JsonLdProcessor {
             }
 
             // add reference and recurse
-            self::addValue($subject, $prop, (object)array('@id' => id), true);
+            self::addValue($subject, $prop, (object)array('@id' => $id), true);
             $this->_flatten($subjects, $o, $namer, $id, null);
           }
           else {
@@ -1972,7 +1975,7 @@ class JsonLdProcessor {
         $state->embeds->{$id} = $embed;
 
         // iterate over subject properties
-        $props = get_object_vars($subject);
+        $props = array_keys((array)$subject);
         sort($props);
         foreach($props as $prop) {
           // copy keywords to output
@@ -2030,7 +2033,7 @@ class JsonLdProcessor {
         }
 
         // handle defaults
-        $props = get_object_vars($frame);
+        $props = array_keys((array)$frame);
         sort($props);
         foreach($props as $prop) {
           // skip keywords
@@ -2069,7 +2072,7 @@ class JsonLdProcessor {
   protected function _getFrameFlag($frame, $options, $name) {
     $flag = "'@'$name";
     return (property_exists($frame, $flag) ?
-      $frame->{$flag}[0] : $options->{$name});
+      $frame->{$flag}[0] : $options[$name]);
   }
 
   /**
@@ -2228,7 +2231,7 @@ class JsonLdProcessor {
     // recursively remove dependent dangling embeds
     $removeDependents = function($id) {
       // get embed keys as a separate array to enable deleting keys in map
-      $ids = get_object_vars($embeds);
+      $ids = array_keys((array)$embeds);
       foreach($ids as $next) {
         if(property_exists($embeds, $next) &&
           is_object($embeds->{$next}->parent) &&
@@ -2765,7 +2768,8 @@ class JsonLdProcessor {
   protected function _expandContextIri(
     $active_ctx, $ctx, $value, $base, $defined) {
     // dependency not defined, define it
-    if(property_exists($ctx, $value) && $defined->{$value} !== true) {
+    if(property_exists($ctx, $value) &&
+      (!property_exists($defined, $value) || !$defined->{$value})) {
       $this->_defineContextMapping($active_ctx, $ctx, $value, $base, $defined);
     }
 
@@ -2776,7 +2780,7 @@ class JsonLdProcessor {
       if($value === $id) {
         return $value;
       }
-      return _expandContextIri($active_ctx, $ctx, $id, $base, $defined);
+      return $this->_expandContextIri($active_ctx, $ctx, $id, $base, $defined);
     }
 
     // split value into prefix:suffix
@@ -2794,7 +2798,8 @@ class JsonLdProcessor {
       }
 
       // dependency not defined, define it
-      if(property_exists($ctx, $prefix) && $defined->{$prefix} !== true) {
+      if(property_exists($ctx, $prefix) &&
+        (!property_exists($defined, $prefix) || !$defined->{$prefix})) {
         $this->_defineContextMapping(
           $active_ctx, $ctx, $prefix, $base, $defined);
       }
@@ -3250,11 +3255,6 @@ class JsonLdException extends Exception {
  * names.
  */
 class UniqueNamer {
-  protected $prefix;
-  protected $counter;
-  protected $existing;
-  protected $order;
-
   /**
    * Constructs a new UniqueNamer.
    *
@@ -3285,7 +3285,7 @@ class UniqueNamer {
   public function getName($old_name=null) {
     // return existing old name
     if($old_name && property_exists($this->existing, $old_name)) {
-      return $this->existing->{$oldName};
+      return $this->existing->{$old_name};
     }
 
     // get next name
@@ -3294,7 +3294,7 @@ class UniqueNamer {
 
     // save mapping
     if($old_name !== null) {
-      $this->existing->{$oldName} = $name;
+      $this->existing->{$old_name} = $name;
     }
 
     return $name;
@@ -3305,7 +3305,7 @@ class UniqueNamer {
    *
    * @param string $old_name the old name to check.
    *
-   * @return true if the oldName has been assigned a new name, false if not.
+   * @return true if the old name has been assigned a new name, false if not.
    */
   public function isNamed($old_name) {
     return property_exists($this->existing, $old_name);
@@ -3317,16 +3317,12 @@ class UniqueNamer {
  * of elements.
  */
 class Permutator {
-  protected $list;
-  protected $done;
-  protected $left;
-
   /**
    * Constructs a new Permutator.
    *
    * @param array $list the array of elements to iterate over.
    */
-  public function __constructor($list) {
+  public function __construct($list) {
     // original array
     $this->list = $list;
     sort($this->list);
