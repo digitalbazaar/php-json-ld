@@ -220,7 +220,9 @@ class TestRunner {
      */
     global $eol;
     foreach($manifests as $manifest) {
-      $this->group($manifest->name);
+      if(property_exists($manifest, 'name')) {
+        $this->group($manifest->name);
+      }
       $filepath = $manifest->filepath;
       foreach($manifest->sequence as $test) {
         // read test input files
@@ -240,7 +242,6 @@ class TestRunner {
           $result = jsonld_expand($input, $options);
         }
         else if(in_array('jld:CompactTest', $type)) {
-          continue;
           $this->test($test->name);
           $input = read_test_json($test->input, $filepath);
           $test->context = read_test_json($test->context, $filepath);
@@ -248,7 +249,6 @@ class TestRunner {
           $result = jsonld_compact($input, $test->context, $options);
         }
         else if(in_array('jld:FrameTest', $type)) {
-          continue;
           $this->test($test->name);
           $input = read_test_json($test->input, $filepath);
           $test->frame = read_test_json($test->frame, $filepath);
@@ -263,6 +263,9 @@ class TestRunner {
 
         // check results
         $this->check($test, $test->expect, $result);
+      }
+      if(property_exists($manifest, 'name')) {
+        $this->ungroup();
       }
     }
   }
@@ -281,6 +284,7 @@ $tr = new TestRunner();
 $tr->group('JSON-LD');
 $tr->run($tr->load($options['d']));
 $tr->ungroup();
+echo "Done. Total:{$tr->total} Passed:{$tr->passed} Failed:{$tr->failed}$eol";
 echo "All tests complete.$eol";
 
-?>
+/* end of file, omit ?> */

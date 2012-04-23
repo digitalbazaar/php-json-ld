@@ -329,7 +329,8 @@ class JsonLdProcessor {
     isset($options['resolver']) or $options['resolver'] = 'jsonld_resolve_url';
 
     // preserve frame context
-    $ctx = $frame->{'@context'} ?: new stdClass();
+    $ctx = (property_exists($frame, '@context') ?
+      $frame->{'@context'} : new stdClass());
 
     try {
       // expand input
@@ -1920,8 +1921,8 @@ class JsonLdProcessor {
 
     // get flags for current frame
     $options = $state->options;
-    $embedOn = $this->_getFrameFlag($frame, $options, 'embed');
-    $explicitOn = $this->_getFrameFlag($frame, $options, 'explicit');
+    $embed_on = $this->_getFrameFlag($frame, $options, 'embed');
+    $explicit_on = $this->_getFrameFlag($frame, $options, 'explicit');
 
     // add matches to output
     foreach($matches as $id => $subject) {
@@ -1940,18 +1941,18 @@ class JsonLdProcessor {
       $embed = (object)array('parent' => $parent, 'property' => $property);
 
       // if embed is on and there is an existing embed
-      if($embedOn && property_exists($state->embeds, $id)) {
+      if($embed_on && property_exists($state->embeds, $id)) {
         // only overwrite an existing embed if it has already been added to its
         // parent -- otherwise its parent is somewhere up the tree from this
         // embed and the embed would occur twice once the tree is added
-        $embedOn = false;
+        $embed_on = false;
 
         // existing embed's parent is an array
         $existing = $state->embeds->{$id};
         if(is_array($existing->parent)) {
           foreach($existing->parent as $p) {
             if(self::compareValues($output, $p)) {
-              $embedOn = true;
+              $embed_on = true;
               break;
             }
           }
@@ -1959,17 +1960,17 @@ class JsonLdProcessor {
         // existing embed's parent is an object
         else if(self::hasValue(
           $existing->parent, $existing->property, $output)) {
-          $embedOn = true;
+          $embed_on = true;
         }
 
         // existing embed has already been added, so allow an overwrite
-        if($embedOn) {
+        if($embed_on) {
           $this->_removeEmbed($state, $id);
         }
       }
 
       // not embedding, add output without any other properties
-      if(!$embedOn) {
+      if(!$embed_on) {
         $this->_addFrameOutput($state, $parent, $property, $output);
       }
       else {
@@ -1989,7 +1990,7 @@ class JsonLdProcessor {
           // if property isn't in the frame
           if(!property_exists($frame, $prop)) {
             // if explicit is off, embed values
-            if(!$explicitOn) {
+            if(!$explicit_on) {
               $this->_embedValues($state, $subject, $prop, $output);
             }
             continue;
@@ -2046,8 +2047,9 @@ class JsonLdProcessor {
           // if omit default is off, then include default values for properties
           // that appear in the next frame but are not in the matching subject
           $next = $frame->{$prop}[0];
-          $omitDefaultOn = $this->_getFrameFlag($next, $options, 'omitDefault');
-          if(!$omitDefaultOn && !property_exists($output, $prop)) {
+          $omit_default_on = $this->_getFrameFlag(
+            $next, $options, 'omitDefault');
+          if(!$omit_default_on && !property_exists($output, $prop)) {
             $preserve = '@null';
             if(property_exists($next, '@default')) {
               $preserve = self::copy($next->{'@default'});
@@ -2072,7 +2074,7 @@ class JsonLdProcessor {
    * @return mixed $the flag value.
    */
   protected function _getFrameFlag($frame, $options, $name) {
-    $flag = "'@'$name";
+    $flag = "@$name";
     return (property_exists($frame, $flag) ?
       $frame->{$flag}[0] : $options[$name]);
   }
@@ -2135,10 +2137,10 @@ class JsonLdProcessor {
     }
 
     // check ducktype
-    foreach($frame as $key) {
+    foreach($frame as $k => $v) {
       // only not a duck if @id or non-keyword isn't in subject
-      if(($key === '@id' || !self::_isKeyword($key)) &&
-        !property_exists($subject, $key)) {
+      if(($k === '@id' || !self::_isKeyword($k)) &&
+        !property_exists($subject, $k)) {
         return false;
       }
     }
@@ -2255,7 +2257,7 @@ class JsonLdProcessor {
    * @param mixed $output the output to add.
    */
   protected function _addFrameOutput($state, $parent, $property, $output) {
-    if(is_object($parent)) {
+    if(is_object($parent) && !($parent instanceof ArrayObject)) {
       self::addValue($parent, $property, $output, true);
     }
     else {
