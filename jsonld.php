@@ -201,15 +201,20 @@ class JsonLdProcessor {
     }
 
     // do compaction
-    $compacted = $this->_compact($active_ctx, null, $input, $options);
+    $compacted = $this->_compact($active_ctx, null, $expanded, $options);
 
     // always use an array if graph options is on
     if($options['graph'] === true) {
-      $output = self::arrayify();
+      $compacted = self::arrayify($compacted);
     }
     // else if compacted is an array with 1 entry, remove array
-    else if(is_array($output) && count($output) === 1) {
-      $output = $output[0];
+    else if(is_array($compacted) && count($compacted) === 1) {
+      $compacted = $compacted[0];
+    }
+
+    // follow @context key
+    if(is_object($ctx) && property_exists($ctx, '@context')) {
+      $ctx = $ctx->{'@context'};
     }
 
     // build output context
@@ -239,7 +244,7 @@ class JsonLdProcessor {
         $kwgraph = $this->_compactIri($active_ctx, '@graph');
         $graph = $compacted;
         $compacted = new stdClass();
-        if($hasContext) {
+        if($has_context) {
           $compacted->{'@context'} = $ctx;
         }
         $compacted->{$kwgraph} = $graph;
@@ -534,15 +539,16 @@ class JsonLdProcessor {
       }
     }
     else if(property_exists($subject, $property)) {
-      $hasValue = self::hasValue($subject, $property, $value);
+      $has_value = self::hasValue($subject, $property, $value);
 
       // make property an array if value not present or always an array
-      if(!is_array($subject->{$property}) && (!$hasValue || $propertyIsArray)) {
+      if(!is_array($subject->{$property}) &&
+        (!$has_value || $propertyIsArray)) {
         $subject->{$property} = array($subject->{$property});
       }
 
       // add new value
-      if(!$hasValue) {
+      if(!$has_value) {
         $subject->{$property}[] = $value;
       }
     }
@@ -875,7 +881,7 @@ class JsonLdProcessor {
           }
 
           // compact property and add value
-          $prop = $this->_compactIri(ctx, key);
+          $prop = $this->_compactIri($ctx, $key);
           $isArray = (is_array($value) && count($value) === 0);
           self::addValue($rval, $prop, $value, $isArray);
           continue;
@@ -902,7 +908,7 @@ class JsonLdProcessor {
           }
 
           // recursively compact value
-          $v = $this->compact($ctx, $prop, $v, $options);
+          $v = $this->_compact($ctx, $prop, $v, $options);
 
           // get container type for property
           $container = self::getContextValue($ctx, $prop, '@container');
@@ -2348,9 +2354,9 @@ class JsonLdProcessor {
 
     // get context entry for term
     $entry = $ctx->mappings->{$term};
-    $hasType = property_exists($entry, '@type');
-    $hasLanguage = property_exists($entry, '@language');
-    $hasDefaultLanguage = property_exists($ctx, '@language');
+    $has_type = property_exists($entry, '@type');
+    $has_language = property_exists($entry, '@language');
+    $has_default_language = property_exists($ctx, '@language');
 
     // @list rank is the sum of its values' ranks
     if(self::_isListValue($value)) {
@@ -2371,23 +2377,23 @@ class JsonLdProcessor {
       if(is_bool($value)) {
         $type = self::XSD_BOOLEAN;
       }
-      else if(is_double(value)) {
+      else if(is_double($value)) {
         $type = self::XSD_DOUBLE;
       }
       else {
         $type = self::XSD_INTEGER;
       }
-      if($entry->{'@type'} === $type) {
+      if($has_type && $entry->{'@type'} === $type) {
         return 3;
       }
-      return (!$hasType && !$hasLanguage) ? 2 : 1;
+      return (!$has_type && !$has_language) ? 2 : 1;
     }
 
     // rank string (this means the value has no @language)
     if(is_string($value)) {
       // entry @language is specifically null or no @type, @language, or default
-      if(($hasLanguage && $entry->{'@language'} === null) ||
-        (!$hasType && !$hasLanguage && !$hasDefaultLanguage)) {
+      if(($has_language && $entry->{'@language'} === null) ||
+        (!$has_type && !$has_language && !$has_default_language)) {
         return 3;
       }
       return 0;
@@ -2399,27 +2405,27 @@ class JsonLdProcessor {
     if(self::_isValue($value)) {
       if(property_exists($value, '@type')) {
         // @types match
-        if($hasType && $value->{'@type'} === $entry->{'@type'}) {
+        if($has_type && $value->{'@type'} === $entry->{'@type'}) {
           return 3;
         }
-        return (!$hasType && !$hasLanguage) ? 1 : 0;
+        return (!$has_type && !$has_language) ? 1 : 0;
       }
 
       // @languages match or entry has no @type or @language but default
       // @language matches
-      if(($hasLanguage && $value->{'@language'} === $entry->{'@language'}) ||
-        (!$hasType && !$hasLanguage &&
+      if(($has_language && $value->{'@language'} === $entry->{'@language'}) ||
+        (!$has_type && !$has_language && $has_default_language &&
           $value->{'@language'} === $ctx->{'@language'})) {
         return 3;
       }
-      return (!$hasType && !$hasLanguage) ? 1 : 0;
+      return (!$has_type && !$has_language) ? 1 : 0;
     }
 
     // value must be a subject/reference
-    if($entry->{'@type'} === '@id') {
+    if($has_type && $entry->{'@type'} === '@id') {
       return 3;
     }
-    return (!$hasType && !$hasLanguage) ? 1 : 0;
+    return (!$has_type && !$has_language) ? 1 : 0;
   }
 
   /**
@@ -2461,22 +2467,24 @@ class JsonLdProcessor {
     $highest = 0;
     $listContainer = false;
     $isList = self::_isListValue($value);
-    foreach($ctx->mappings as $term) {
+    foreach($ctx->mappings as $term => $entry) {
+      $has_container = property_exists($entry, '@container');
+
       // skip terms with non-matching iris
-      $entry = $ctx->mappings->{$term};
       if($entry->{'@id'} !== $iri) {
         continue;
       }
       // skip @set containers for @lists
-      if($isList && $entry->{'@container'} === '@set') {
+      if($isList && $has_container && $entry->{'@container'} === '@set') {
         continue;
       }
       // skip @list containers for non-@lists
-      if(!$isList && $entry->{'@container'} === '@list') {
+      if(!$isList && $has_container && $entry->{'@container'} === '@list') {
         continue;
       }
       // for @lists, if listContainer is set, skip non-list containers
-      if($isList && $listContainer && $entry->{'@container'} !== '@list') {
+      if($isList && $listContainer && (!$has_container ||
+        $entry->{'@container'} !== '@list')) {
         continue;
       }
 
@@ -2484,12 +2492,13 @@ class JsonLdProcessor {
       $rank = $this->_rankTerm($ctx, $term, $value);
       if($rank > 0) {
         // add 1 to rank if container is a @set
-        if($entry->{'@container'} === '@set') {
+        if($has_container && $entry->{'@container'} === '@set') {
           $rank += 1;
         }
 
         // for @lists, give preference to @list containers
-        if($isList && !$listContainer && $entry->{'@container'} === '@list') {
+        if($isList && !$listContainer && $has_container &&
+          $entry->{'@container'} === '@list') {
           $listContainer = true;
           $terms = array();
           $highest = $rank;
@@ -3239,7 +3248,7 @@ class JsonLdException extends Exception {
       $rval .= 'details: ' . print_r($this->details, true) . "\n";
     }
     if($this->cause) {
-      $rval .= 'cause: ' . $this->cause->toString();
+      $rval .= 'cause: ' . $this->cause;
     }
     $rval .= $this->getTraceAsString() . "\n";
     return $rval;
