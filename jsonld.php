@@ -1475,7 +1475,7 @@ class JsonLdProcessor {
             $o = (object)array('@value' => $o, '@type' => self::XSD_DOUBLE);
           }
           // convert integer to @value
-          else if(is_numeric($o)) {
+          else if(is_integer($o)) {
             $o = (object)array(
               '@value' => strval($o), '@type' => self::XSD_INTEGER);
           }
@@ -2367,7 +2367,7 @@ class JsonLdProcessor {
     }
 
     // rank boolean or number
-    if(is_bool($value) || is_numeric($value)) {
+    if(is_bool($value) || is_double($value) || is_integer($value)) {
       if(is_bool($value)) {
         $type = self::XSD_BOOLEAN;
       }
