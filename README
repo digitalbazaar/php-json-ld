@@ -46,10 +46,8 @@ http://github.com/digitalbazaar/php-json-ld
 
 To run the tests, checkout:
 
-http://github.com/digitalbazaar/jsonld.js
+https://github.com/json-ld/json-ld.org
 
-And create a symbolic link called 'tests' in your php-json-ld
-directory to the 'tests/jsonld' directory in your jsonld.js
-directory. Then run:
+Then run:
 
-php jsonld-tests.php
+php jsonld-tests.php -d <path to json-ld.org/test-suite/tests>
