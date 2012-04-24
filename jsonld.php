@@ -119,22 +119,6 @@ function jsonld_to_rdf($input, $options=array()) {
 }
 
 /**
- * Processes a local context, resolving any URLs as necessary, and returns a
- * new active context.
- *
- * @param active_ctx the current active context.
- * @param local_ctx the local context to process.
- * @param [options] the options to use:
- *          [resolver(url, callback(err, jsonCtx))] the URL resolver to use.
- *
- * @return the new active context.
- */
-function jsonld_process_context($active_ctx, $local_ctx, $options=array()) {
-  $p = new JsonLdProcessor();
-  return $p->processContext($active_ctx, $local_ctx, $options);
-}
-
-/**
  * A JSON-LD processor.
  */
 class JsonLdProcessor {
@@ -196,7 +180,7 @@ class JsonLdProcessor {
     }
     catch(JsonLdException $e) {
       throw new JsonLdException(
-        'Could not merge context before compaction.',
+        'Could not process context before compaction.',
         'jsonld.CompactError', null, $e);
     }
 
