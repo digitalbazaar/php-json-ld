@@ -208,7 +208,7 @@ class JsonLdProcessor {
     // remove empty contexts
     $tmp = $ctx;
     $ctx = array();
-    foreach($tmp as $i => $v) {
+    foreach($tmp as $v) {
       if(!is_object($v) || count(get_object_vars($v)) > 0) {
         $ctx[] = $v;
       }
@@ -436,7 +436,7 @@ class JsonLdProcessor {
     // FIXME: implement jsonld_resolve_url
     isset($options['resolver']) or $options['resolver'] = 'jsonld_resolve_url';
 
-    // resolve URLs in localCtx
+    // resolve URLs in local_ctx
     $local_ctx = self::copy($local_ctx);
     if(is_object($local_ctx) && !property_exists($local_ctx, '@context')) {
       $local_ctx = (object)array('@context' => $local_ctx);
@@ -744,13 +744,10 @@ class JsonLdProcessor {
    *
    * @param mixed $value the value.
    *
-   * @return an array.
+   * @return array an array.
    */
   public static function arrayify($value) {
-    if(is_array($value)) {
-      return $value;
-    }
-    return array($value);
+    return is_array($value) ? $value : array($value);
   }
 
   /**
@@ -967,161 +964,162 @@ class JsonLdProcessor {
       return $rval;
     }
 
-    // recursively expand object
-    if(is_object($element)) {
-      // if element has a context, process it
-      if(property_exists($element, '@context')) {
-        $ctx = $this->_processContext($ctx, $element->{'@context'}, $options);
-        unset($element->{'@context'});
-      }
-
-      $rval = new stdClass();
-      foreach($element as $key => $value) {
-        // expand property
-        $prop = $this->_expandTerm($ctx, $key);
-
-        // drop non-absolute IRI keys that aren't keywords
-        if(!self::_isAbsoluteIri($prop) && !self::_isKeyword($prop, $ctx)) {
-          continue;
-        }
-
-        // if value is null and property is not @value, continue
-        $value = $element->{$key};
-        if($value === null && $prop !== '@value') {
-          continue;
-        }
-
-        // syntax error if @id is not a string
-        if($prop === '@id' && !is_string($value)) {
-          throw new JsonLdException(
-            'Invalid JSON-LD syntax; "@id" value must a string.',
-            'jsonld.SyntaxError', array('value' => $value));
-        }
-
-        // @type must be a string, array of strings, or an empty JSON object
-        if($prop === '@type' &&
-          !(is_string($value) || self::_isArrayOfStrings($value) ||
-          self::_isEmptyObject($value))) {
-          throw new JsonLdException(
-            'Invalid JSON-LD syntax; "@type" value must a string, an array ' +
-            'of strings, or an empty object.',
-            'jsonld.SyntaxError', array('value' => $value));
-        }
-
-        // @graph must be an array or an object
-        if($prop === '@graph' && !(is_object($value) || is_array($value))) {
-          throw new JsonLdException(
-            'Invalid JSON-LD syntax; "@value" value must not be an ' +
-            'object or an array.',
-            'jsonld.SyntaxError', array('value' => $value));
-        }
-
-        // @value must not be an object or an array
-        if($prop === '@value' && (is_object($value) || is_array($value))) {
-          throw new JsonLdException(
-            'Invalid JSON-LD syntax; "@value" value must not be an ' +
-            'object or an array.',
-            'jsonld.SyntaxError', array('value' => $value));
-        }
-
-        // @language must be a string
-        if($prop === '@language' && !is_string($value)) {
-          throw new JsonLdException(
-            'Invalid JSON-LD syntax; "@language" value must not be a string.',
-            'jsonld.SyntaxError', array('value' => $value));
-        }
-
-        // recurse into @list, @set, or @graph, keeping the active property
-        $isList = ($prop === '@list');
-        if($isList || $prop === '@set' || $prop === '@graph') {
-          $value = $this->_expand($ctx, $property, $value, $options, $isList);
-          if($isList && self::_isListValue($value)) {
-            throw new JsonLdException(
-              'Invalid JSON-LD syntax; lists of lists are not permitted.',
-              'jsonld.SyntaxError');
-          }
-        }
-        else {
-          // update active property and recursively expand value
-          $property = $key;
-          $value = $this->_expand($ctx, $property, $value, $options, false);
-        }
-
-        // drop null values if property is not @value (dropped below)
-        if($value !== null || $prop === '@value') {
-          // convert value to @list if container specifies it
-          if($prop !== '@list' && !self::_isListValue($value)) {
-            $container = self::getContextValue($ctx, $property, '@container');
-            if($container === '@list') {
-              // ensure value is an array
-              $value = (object)array('@list' => self::arrayify($value));
-            }
-          }
-
-          // add value, use an array if not @id, @type, @value, or @language
-          $useArray = !($prop === '@id' || $prop === '@type' ||
-            $prop === '@value' || $prop === '@language');
-          self::addValue($rval, $prop, $value, $useArray);
-        }
-      }
-
-      // get property count on expanded output
-      $count = count(get_object_vars($rval));
-
-      // @value must only have @language or @type
-      if(property_exists($rval, '@value')) {
-        if(($count === 2 && !property_exists($rval, '@type') &&
-          !property_exists($rval, '@language')) ||
-          $count > 2) {
-          throw new JsonLdException(
-            'Invalid JSON-LD syntax; an element containing "@value" must have ' +
-            'at most one other property which can be "@type" or "@language".',
-            'jsonld.SyntaxError', array('element' => $rval));
-        }
-        // value @type must be a string
-        if(property_exists($rval, '@type') && !is_string($rval->{'@type'})) {
-          throw new JsonLdException(
-            'Invalid JSON-LD syntax; the "@type" value of an element ' +
-            'containing "@value" must be a string.',
-            'jsonld.SyntaxError', array('element' => $rval));
-        }
-        // return only the value of @value if there is no @type or @language
-        else if($count === 1) {
-          $rval = $rval->{'@value'};
-        }
-        // drop null @values
-        else if($rval->{'@value'} === null) {
-          $rval = null;
-        }
-      }
-      // convert @type to an array
-      else if(property_exists($rval, '@type') && !is_array($rval->{'@type'})) {
-        $rval->{'@type'} = array($rval->{'@type'});
-      }
-      // handle @set and @list
-      else if(property_exists($rval, '@set') ||
-        property_exists($rval, '@list')) {
-        if($count !== 1) {
-          throw new JsonLdException(
-            'Invalid JSON-LD syntax; if an element has the property "@set" ' +
-            'or "@list", then it must be its only property.',
-            'jsonld.SyntaxError', array('element' => $rval));
-        }
-        // optimize away @set
-        if(property_exists($rval, '@set')) {
-          $rval = $rval->{'@set'};
-        }
-      }
-      // drop objects with only @language
-      else if(property_exists($rval, '@language') && $count === 1) {
-        $rval = null;
-      }
-
-      return $rval;
+    // expand non-object element according to value expansion rules
+    if(!is_object($element)) {
+      return $this->_expandValue($ctx, $property, $element, $options['base']);
     }
 
-    // expand element according to value expansion rules
-    return $this->_expandValue($ctx, $property, $element, $options['base']);
+    // Note: element must be an object, recursively expand it
+
+    // if element has a context, process it
+    if(property_exists($element, '@context')) {
+      $ctx = $this->_processContext($ctx, $element->{'@context'}, $options);
+      unset($element->{'@context'});
+    }
+
+    $rval = new stdClass();
+    foreach($element as $key => $value) {
+      // expand property
+      $prop = $this->_expandTerm($ctx, $key);
+
+      // drop non-absolute IRI keys that aren't keywords
+      if(!self::_isAbsoluteIri($prop) && !self::_isKeyword($prop, $ctx)) {
+        continue;
+      }
+
+      // if value is null and property is not @value, continue
+      $value = $element->{$key};
+      if($value === null && $prop !== '@value') {
+        continue;
+      }
+
+      // syntax error if @id is not a string
+      if($prop === '@id' && !is_string($value)) {
+        throw new JsonLdException(
+          'Invalid JSON-LD syntax; "@id" value must a string.',
+          'jsonld.SyntaxError', array('value' => $value));
+      }
+
+      // @type must be a string, array of strings, or an empty JSON object
+      if($prop === '@type' &&
+        !(is_string($value) || self::_isArrayOfStrings($value) ||
+        self::_isEmptyObject($value))) {
+        throw new JsonLdException(
+          'Invalid JSON-LD syntax; "@type" value must a string, an array ' +
+          'of strings, or an empty object.',
+          'jsonld.SyntaxError', array('value' => $value));
+      }
+
+      // @graph must be an array or an object
+      if($prop === '@graph' && !(is_object($value) || is_array($value))) {
+        throw new JsonLdException(
+          'Invalid JSON-LD syntax; "@value" value must not be an ' +
+          'object or an array.',
+          'jsonld.SyntaxError', array('value' => $value));
+      }
+
+      // @value must not be an object or an array
+      if($prop === '@value' && (is_object($value) || is_array($value))) {
+        throw new JsonLdException(
+          'Invalid JSON-LD syntax; "@value" value must not be an ' +
+          'object or an array.',
+          'jsonld.SyntaxError', array('value' => $value));
+      }
+
+      // @language must be a string
+      if($prop === '@language' && !is_string($value)) {
+        throw new JsonLdException(
+          'Invalid JSON-LD syntax; "@language" value must not be a string.',
+          'jsonld.SyntaxError', array('value' => $value));
+      }
+
+      // recurse into @list, @set, or @graph, keeping the active property
+      $isList = ($prop === '@list');
+      if($isList || $prop === '@set' || $prop === '@graph') {
+        $value = $this->_expand($ctx, $property, $value, $options, $isList);
+        if($isList && self::_isListValue($value)) {
+          throw new JsonLdException(
+            'Invalid JSON-LD syntax; lists of lists are not permitted.',
+            'jsonld.SyntaxError');
+        }
+      }
+      else {
+        // update active property and recursively expand value
+        $property = $key;
+        $value = $this->_expand($ctx, $property, $value, $options, false);
+      }
+
+      // drop null values if property is not @value (dropped below)
+      if($value !== null || $prop === '@value') {
+        // convert value to @list if container specifies it
+        if($prop !== '@list' && !self::_isListValue($value)) {
+          $container = self::getContextValue($ctx, $property, '@container');
+          if($container === '@list') {
+            // ensure value is an array
+            $value = (object)array('@list' => self::arrayify($value));
+          }
+        }
+
+        // add value, use an array if not @id, @type, @value, or @language
+        $useArray = !($prop === '@id' || $prop === '@type' ||
+          $prop === '@value' || $prop === '@language');
+        self::addValue($rval, $prop, $value, $useArray);
+      }
+    }
+
+    // get property count on expanded output
+    $count = count(get_object_vars($rval));
+
+    // @value must only have @language or @type
+    if(property_exists($rval, '@value')) {
+      if(($count === 2 && !property_exists($rval, '@type') &&
+        !property_exists($rval, '@language')) ||
+        $count > 2) {
+        throw new JsonLdException(
+          'Invalid JSON-LD syntax; an element containing "@value" must have ' +
+          'at most one other property which can be "@type" or "@language".',
+          'jsonld.SyntaxError', array('element' => $rval));
+      }
+      // value @type must be a string
+      if(property_exists($rval, '@type') && !is_string($rval->{'@type'})) {
+        throw new JsonLdException(
+          'Invalid JSON-LD syntax; the "@type" value of an element ' +
+          'containing "@value" must be a string.',
+          'jsonld.SyntaxError', array('element' => $rval));
+      }
+      // return only the value of @value if there is no @type or @language
+      else if($count === 1) {
+        $rval = $rval->{'@value'};
+      }
+      // drop null @values
+      else if($rval->{'@value'} === null) {
+        $rval = null;
+      }
+    }
+    // convert @type to an array
+    else if(property_exists($rval, '@type') && !is_array($rval->{'@type'})) {
+      $rval->{'@type'} = array($rval->{'@type'});
+    }
+    // handle @set and @list
+    else if(property_exists($rval, '@set') ||
+      property_exists($rval, '@list')) {
+      if($count !== 1) {
+        throw new JsonLdException(
+          'Invalid JSON-LD syntax; if an element has the property "@set" ' +
+          'or "@list", then it must be its only property.',
+          'jsonld.SyntaxError', array('element' => $rval));
+      }
+      // optimize away @set
+      if(property_exists($rval, '@set')) {
+        $rval = $rval->{'@set'};
+      }
+    }
+    // drop objects with only @language
+    else if(property_exists($rval, '@language') && $count === 1) {
+      $rval = null;
+    }
+
+    return $rval;
   }
 
   /**
