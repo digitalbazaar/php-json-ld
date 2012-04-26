@@ -1400,122 +1400,121 @@ class JsonLdProcessor {
       foreach($input as $e) {
         $this->_getStatements($e, $namer, $bnodes, $subjects);
       }
+      return;
     }
-    // safe to assume input is a subject/blank node
-    else {
-      $isBnode = self::_isBlankNode($input);
 
-      // name blank node if appropriate, use passed name if given
-      if($name === null) {
-        if(property_exists($input, '@id')) {
-          $name = $input->{'@id'};
-        }
-        if($isBnode) {
-          $name = $namer->getName($name);
-        }
+    // Note: safe to assume input is a subject/blank node
+    $isBnode = self::_isBlankNode($input);
+
+    // name blank node if appropriate, use passed name if given
+    if($name === null) {
+      if(property_exists($input, '@id')) {
+        $name = $input->{'@id'};
       }
-
-      // use a subject of '_:a' for blank node statements
-      $s = $isBnode ? '_:a' : $name;
-
-      // get statements for the blank node
-      $entries;
       if($isBnode) {
-        if(!property_exists($bnodes, $name)) {
-          $entries = $bnodes->{$name} = new ArrayObject();
-        }
-        else {
-          $entries = $bnodes->{$name};
-        }
+        $name = $namer->getName($name);
       }
-      else if(!property_exists($subjects, $name)) {
-        $entries = $subjects->{$name} = new ArrayObject();
+    }
+
+    // use a subject of '_:a' for blank node statements
+    $s = $isBnode ? '_:a' : $name;
+
+    // get statements for the blank node
+    if($isBnode) {
+      if(!property_exists($bnodes, $name)) {
+        $entries = $bnodes->{$name} = new ArrayObject();
       }
       else {
-        $entries = $subjects->{$name};
+        $entries = $bnodes->{$name};
+      }
+    }
+    else if(!property_exists($subjects, $name)) {
+      $entries = $subjects->{$name} = new ArrayObject();
+    }
+    else {
+      $entries = $subjects->{$name};
+    }
+
+    // add all statements in input
+    foreach($input as $p => $objects) {
+      // skip @id
+      if($p === '@id') {
+        continue;
       }
 
-      // add all statements in input
-      foreach($input as $p => $objects) {
-        // skip @id
-        if($p === '@id') {
-          continue;
+      // convert @lists into embedded blank node linked lists
+      foreach($objects as $i => $o) {
+        if(self::_isListValue($o)) {
+          $objects[$i] = $this->_makeLinkedList($o);
+        }
+      }
+
+      foreach($objects as $o) {
+        // convert boolean to @value
+        if(is_bool($o)) {
+          $o = (object)array(
+            '@value' => ($o ? 'true' : 'false'),
+            '@type' => self::XSD_BOOLEAN);
+        }
+        // convert double to @value
+        else if(is_double($o)) {
+          // do special JSON-LD double format, printf('%1.16e') equivalent
+          $o = preg_replace('/(e(?:\+|-))([0-9])$/', '${1}0${2}',
+            sprintf('%1.16e', $o));
+          $o = (object)array('@value' => $o, '@type' => self::XSD_DOUBLE);
+        }
+        // convert integer to @value
+        else if(is_integer($o)) {
+          $o = (object)array(
+            '@value' => strval($o), '@type' => self::XSD_INTEGER);
         }
 
-        // convert @lists into embedded blank node linked lists
-        foreach($objects as $i => $o) {
-          if(self::_isListValue($o)) {
-            $objects[$i] = $this->_makeLinkedList($o);
-          }
-        }
+        // object is a blank node
+        if(self::_isBlankNode($o)) {
+          // name object position blank node
+          $o_name = property_exists($o, '@id') ? $o->{'@id'} : null;
+          $o_name = $namer->getName($o_name);
 
-        foreach($objects as $o) {
-          // convert boolean to @value
-          if(is_bool($o)) {
-            $o = (object)array(
-              '@value' => ($o ? 'true' : 'false'),
-              '@type' => self::XSD_BOOLEAN);
-          }
-          // convert double to @value
-          else if(is_double($o)) {
-            // do special JSON-LD double format, printf('%1.16e') equivalent
-            $o = preg_replace('/(e(?:\+|-))([0-9])$/', '${1}0${2}',
-              sprintf('%1.16e', $o));
-            $o = (object)array('@value' => $o, '@type' => self::XSD_DOUBLE);
-          }
-          // convert integer to @value
-          else if(is_integer($o)) {
-            $o = (object)array(
-              '@value' => strval($o), '@type' => self::XSD_INTEGER);
-          }
+          // add property statement
+          $this->_addStatement($entries, (object)array(
+            's' => $s, 'p' => $p, 'o' => (object)array('@id' => $o_name)));
 
-          // object is a blank node
-          if(self::_isBlankNode($o)) {
-            // name object position blank node
-            $o_name = property_exists($o, '@id') ? $o->{'@id'} : null;
-            $o_name = $namer->getName($o_name);
-
-            // add property statement
-            $this->_addStatement($entries, (object)array(
-              's' => $s, 'p' => $p, 'o' => (object)array('@id' => $o_name)));
-
-            // add reference statement
-            if(!property_exists($bnodes, $o_name)) {
-              $o_entries = $bnodes->{$o_name} = new ArrayObject();
-            }
-            else {
-              $o_entries = $bnodes->{$o_name};
-            }
-            $this->_addStatement(
-              $o_entries, (object)array(
-                's' => $name, 'p' => $p, 'o' => (object)array('@id' => '_:a')));
-
-            // recurse into blank node
-            $this->_getStatements($o, $namer, $bnodes, $subjects, $o_name);
+          // add reference statement
+          if(!property_exists($bnodes, $o_name)) {
+            $o_entries = $bnodes->{$o_name} = new ArrayObject();
           }
-          // object is a string, @value, subject reference
-          else if(is_string($o) || self::_isValue($o) ||
-            self::_isSubjectReference($o)) {
-            // add property statement
-            $this->_addStatement($entries, (object)array(
-              's' => $s, 'p' => $p, 'o' => $o));
-
-            // ensure a subject entry exists for subject reference
-            if(self::_isSubjectReference($o) &&
-              !property_exists($subjects, $o->{'@id'})) {
-              $subjects->{$o->{'@id'}} = new ArrayObject();
-            }
-          }
-          // object must be an embedded subject
           else {
-            // add property statement
-            $this->_addStatement($entries, (object)array(
-              's' => $s, 'p' => $p, 'o' => (object)array(
-                '@id' => $o->{'@id'})));
-
-            // recurse into subject
-            $this->_getStatements($o, $namer, $bnodes, $subjects);
+            $o_entries = $bnodes->{$o_name};
           }
+          $this->_addStatement(
+            $o_entries, (object)array(
+              's' => $name, 'p' => $p, 'o' => (object)array('@id' => '_:a')));
+
+          // recurse into blank node
+          $this->_getStatements($o, $namer, $bnodes, $subjects, $o_name);
+        }
+        // object is a string, @value, subject reference
+        else if(is_string($o) || self::_isValue($o) ||
+          self::_isSubjectReference($o)) {
+          // add property statement
+          $this->_addStatement($entries, (object)array(
+            's' => $s, 'p' => $p, 'o' => $o));
+
+          // ensure a subject entry exists for subject reference
+          if(self::_isSubjectReference($o) &&
+            !property_exists($subjects, $o->{'@id'})) {
+            $subjects->{$o->{'@id'}} = new ArrayObject();
+          }
+        }
+        // object must be an embedded subject
+        else {
+          // add property statement
+          $this->_addStatement($entries, (object)array(
+            's' => $s, 'p' => $p, 'o' => (object)array(
+              '@id' => $o->{'@id'})));
+
+          // recurse into subject
+          $this->_getStatements($o, $namer, $bnodes, $subjects);
         }
       }
     }
