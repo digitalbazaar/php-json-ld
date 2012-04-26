@@ -1061,9 +1061,9 @@ class JsonLdProcessor {
         }
 
         // add value, use an array if not @id, @type, @value, or @language
-        $useArray = !($prop === '@id' || $prop === '@type' ||
+        $use_array = !($prop === '@id' || $prop === '@type' ||
           $prop === '@value' || $prop === '@language');
-        self::addValue($rval, $prop, $value, $useArray);
+        self::addValue($rval, $prop, $value, $use_array);
       }
     }
 
@@ -1143,7 +1143,7 @@ class JsonLdProcessor {
 
     // frame the subjects
     $framed = new ArrayObject();
-    $this->_match_frame(
+    $this->_matchFrame(
       $state, array_keys((array)$state->subjects), $frame, $framed, null);
     return (array)$framed;
   }
@@ -1891,7 +1891,7 @@ class JsonLdProcessor {
    * @param mixed $parent the parent subject or top-level array.
    * @param mixed $property the parent property, initialized to null.
    */
-  protected function _match_frame(
+  protected function _matchFrame(
     $state, $subjects, $frame, $parent, $property) {
     // validate the frame
     $this->_validateFrame($state, $frame);
@@ -1991,7 +1991,7 @@ class JsonLdProcessor {
               foreach($src as $o) {
                 // recurse into subject reference
                 if(self::_isSubjectReference($o)) {
-                  $this->_match_frame(
+                  $this->_matchFrame(
                     $state, array($o->{'@id'}), $frame->{$prop},
                     $list, '@list');
                 }
@@ -2006,7 +2006,7 @@ class JsonLdProcessor {
 
             // recurse into subject reference
             if(self::_isSubjectReference($o)) {
-              $this->_match_frame(
+              $this->_matchFrame(
                 $state, array($o->{'@id'}), $frame->{$prop}, $output, $prop);
             }
             // include other values automatically
@@ -2208,9 +2208,9 @@ class JsonLdProcessor {
     }
     else {
       // replace subject with reference
-      $useArray = is_array($embed->parent->{$property});
-      self::removeValue($embed->parent, $property, $subject, $useArray);
-      self::addValue($embed->parent, $property, $subject, $useArray);
+      $use_array = is_array($embed->parent->{$property});
+      self::removeValue($embed->parent, $property, $subject, $use_array);
+      self::addValue($embed->parent, $property, $subject, $use_array);
     }
 
     // recursively remove dependent dangling embeds
