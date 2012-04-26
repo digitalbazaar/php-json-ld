@@ -477,7 +477,7 @@ class JsonLdProcessor {
     $rval = false;
     if(self::hasProperty($subject, $property)) {
       $val = $subject->{$property};
-      $isList = self::_isListValue($val);
+      $isList = self::_isList($val);
       if(is_array($val) || $isList) {
         if($isList) {
           $val = $val->{'@list'};
@@ -879,7 +879,7 @@ class JsonLdProcessor {
 
         // recusively process array values
         foreach($value as $v) {
-          $isList = self::_isListValue($v);
+          $isList = self::_isList($v);
 
           // compact property
           $prop = $this->_compactIri($ctx, $key, $v);
@@ -1037,7 +1037,7 @@ class JsonLdProcessor {
       $isList = ($prop === '@list');
       if($isList || $prop === '@set' || $prop === '@graph') {
         $value = $this->_expand($ctx, $property, $value, $options, $isList);
-        if($isList && self::_isListValue($value)) {
+        if($isList && self::_isList($value)) {
           throw new JsonLdException(
             'Invalid JSON-LD syntax; lists of lists are not permitted.',
             'jsonld.SyntaxError');
@@ -1052,7 +1052,7 @@ class JsonLdProcessor {
       // drop null values if property is not @value (dropped below)
       if($value !== null || $prop === '@value') {
         // convert value to @list if container specifies it
-        if($prop !== '@list' && !self::_isListValue($value)) {
+        if($prop !== '@list' && !self::_isList($value)) {
           $container = self::getContextValue($ctx, $property, '@container');
           if($container === '@list') {
             // ensure value is an array
@@ -1444,7 +1444,7 @@ class JsonLdProcessor {
 
       // convert @lists into embedded blank node linked lists
       foreach($objects as $i => $o) {
-        if(self::_isListValue($o)) {
+        if(self::_isList($o)) {
           $objects[$i] = $this->_makeLinkedList($o);
         }
       }
@@ -1864,7 +1864,7 @@ class JsonLdProcessor {
           }
           else {
             // recurse into list
-            if(self::_isListValue($o)) {
+            if(self::_isList($o)) {
               $l = new ArrayObject();
               $this->_flatten($subjects, $o->{'@list'}, $namer, $name, $l);
               $o = (object)array('@list' => (array)$l);
@@ -1981,7 +1981,7 @@ class JsonLdProcessor {
           $objects = $subject->{$prop};
           foreach($objects as $o) {
             // recurse into list
-            if(self::_isListValue($o)) {
+            if(self::_isList($o)) {
               // add empty list
               $list = (object)array('@list' => array());
               $this->_addFrameOutput($state, $output, $prop, $list);
@@ -2142,7 +2142,7 @@ class JsonLdProcessor {
     $objects = $subject->{$property};
     foreach($objects as $o) {
       // recurse into @list
-      if(self::_isListValue($o)) {
+      if(self::_isList($o)) {
         $list = (object)array('@list' => new ArrayObject());
         $this->_addFrameOutput($state, $output, $property, $list);
         $this->_embedValues($state, $o, '@list', $list->{'@list'});
@@ -2282,7 +2282,7 @@ class JsonLdProcessor {
       }
 
       // recurse through @lists
-      if(self::_isListValue($input)) {
+      if(self::_isList($input)) {
         $input->{'@list'} = $this->_removePreserve($ctx, $input->{'@list'});
         return $input;
       }
@@ -2342,7 +2342,7 @@ class JsonLdProcessor {
     $has_default_language = property_exists($ctx, '@language');
 
     // @list rank is the sum of its values' ranks
-    if(self::_isListValue($value)) {
+    if(self::_isList($value)) {
       $list = $value->{'@list'};
       if(count($list) === 0) {
         return ($entry->{'@container'} === '@list') ? 1 : 0;
@@ -2449,7 +2449,7 @@ class JsonLdProcessor {
     $terms = array();
     $highest = 0;
     $listContainer = false;
-    $isList = self::_isListValue($value);
+    $isList = self::_isList($value);
     foreach($ctx->mappings as $term => $entry) {
       $has_container = property_exists($entry, '@container');
 
@@ -3146,27 +3146,13 @@ class JsonLdProcessor {
   }
 
   /**
-   * Returns true if the given value is a @set.
-   *
-   * @param mixed $value the value to check.
-   *
-   * @return bool true if the value is a @set, false if not.
-   */
-  protected static function _isSetValue($value) {
-    // Note: A value is a @set if all of these hold true:
-    // 1. It is an Object.
-    // 2. It has the @set property.
-    return is_object($value) && property_exists($value, '@set');
-  }
-
-  /**
    * Returns true if the given value is a @list.
    *
    * @param mixed $value the value to check.
    *
    * @return bool true if the value is a @list, false if not.
    */
-  protected static function _isListValue($value) {
+  protected static function _isList($value) {
     // Note: A value is a @list if all of these hold true:
     // 1. It is an Object.
     // 2. It has the @list property.
