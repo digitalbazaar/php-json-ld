@@ -477,9 +477,9 @@ class JsonLdProcessor {
     $rval = false;
     if(self::hasProperty($subject, $property)) {
       $val = $subject->{$property};
-      $isList = self::_isList($val);
-      if(is_array($val) || $isList) {
-        if($isList) {
+      $is_list = self::_isList($val);
+      if(is_array($val) || $is_list) {
+        if($is_list) {
           $val = $val->{'@list'};
         }
         foreach($val as $v) {
@@ -879,13 +879,13 @@ class JsonLdProcessor {
 
         // recusively process array values
         foreach($value as $v) {
-          $isList = self::_isList($v);
+          $is_list = self::_isList($v);
 
           // compact property
           $prop = $this->_compactIri($ctx, $key, $v);
 
           // remove @list for recursion (will be re-added if necessary)
-          if($isList) {
+          if($is_list) {
             $v = $v->{'@list'};
           }
 
@@ -896,7 +896,7 @@ class JsonLdProcessor {
           $container = self::getContextValue($ctx, $prop, '@container');
 
           // handle @list
-          if($isList && $container !== '@list') {
+          if($is_list && $container !== '@list') {
             // handle messy @list compaction
             if(property_exists($rval, $prop) && $options['strict']) {
               throw new JsonLdException(
@@ -1034,10 +1034,10 @@ class JsonLdProcessor {
       }
 
       // recurse into @list, @set, or @graph, keeping the active property
-      $isList = ($prop === '@list');
-      if($isList || $prop === '@set' || $prop === '@graph') {
-        $value = $this->_expand($ctx, $property, $value, $options, $isList);
-        if($isList && self::_isList($value)) {
+      $is_list = ($prop === '@list');
+      if($is_list || $prop === '@set' || $prop === '@graph') {
+        $value = $this->_expand($ctx, $property, $value, $options, $is_list);
+        if($is_list && self::_isList($value)) {
           throw new JsonLdException(
             'Invalid JSON-LD syntax; lists of lists are not permitted.',
             'jsonld.SyntaxError');
@@ -2448,8 +2448,8 @@ class JsonLdProcessor {
     // find all possible term matches
     $terms = array();
     $highest = 0;
-    $listContainer = false;
-    $isList = self::_isList($value);
+    $list_container = false;
+    $is_list = self::_isList($value);
     foreach($ctx->mappings as $term => $entry) {
       $has_container = property_exists($entry, '@container');
 
@@ -2458,15 +2458,15 @@ class JsonLdProcessor {
         continue;
       }
       // skip @set containers for @lists
-      if($isList && $has_container && $entry->{'@container'} === '@set') {
+      if($is_list && $has_container && $entry->{'@container'} === '@set') {
         continue;
       }
       // skip @list containers for non-@lists
-      if(!$isList && $has_container && $entry->{'@container'} === '@list') {
+      if(!$is_list && $has_container && $entry->{'@container'} === '@list') {
         continue;
       }
-      // for @lists, if listContainer is set, skip non-list containers
-      if($isList && $listContainer && (!$has_container ||
+      // for @lists, if list_container is set, skip non-list containers
+      if($is_list && $list_container && (!$has_container ||
         $entry->{'@container'} !== '@list')) {
         continue;
       }
@@ -2480,9 +2480,9 @@ class JsonLdProcessor {
         }
 
         // for @lists, give preference to @list containers
-        if($isList && !$listContainer && $has_container &&
+        if($is_list && !$list_container && $has_container &&
           $entry->{'@container'} === '@list') {
-          $listContainer = true;
+          $list_container = true;
           $terms = array();
           $highest = $rank;
           $terms[] = $term;
