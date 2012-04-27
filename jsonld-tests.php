@@ -285,6 +285,5 @@ $tr->group('JSON-LD');
 $tr->run($tr->load($options['d']));
 $tr->ungroup();
 echo "Done. Total:{$tr->total} Passed:{$tr->passed} Failed:{$tr->failed}$eol";
-echo "All tests complete.$eol";
 
 /* end of file, omit ?> */
