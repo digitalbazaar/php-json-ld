@@ -839,8 +839,7 @@ class JsonLdProcessor {
       if(self::_isSubjectReference($element)) {
         $type = self::getContextValue($ctx, $property, '@type');
         if($type === '@id' || $property === '@graph') {
-          $element = $this->_compactIri($ctx, $element->{'@id'});
-          return $element;
+          return $this->_compactIri($ctx, $element->{'@id'});
         }
       }
 
@@ -874,7 +873,9 @@ class JsonLdProcessor {
         // preserve empty arrays
         if(count($value) === 0) {
           $prop = $this->_compactIri($ctx, $key);
-          self::addValue($rval, $prop, array(), true);
+          if($prop !== null) {
+            self::addValue($rval, $prop, array(), true);
+          }
         }
 
         // recusively process array values
@@ -883,6 +884,11 @@ class JsonLdProcessor {
 
           // compact property
           $prop = $this->_compactIri($ctx, $key, $v);
+
+          // skip null properties
+          if($prop === null) {
+            continue;
+          }
 
           // remove @list for recursion (will be re-added if necessary)
           if($is_list) {
@@ -2527,8 +2533,14 @@ class JsonLdProcessor {
       }
     }
 
-    // no matching terms, use IRI
+    // no matching terms
     if(count($terms) === 0) {
+      // return null if a null mapping exists
+      if(property_exists($ctx->mappings, $iri) &&
+        $ctx->mappings->{$iri}->{'@id'} === null) {
+        return null;
+      }
+      // use iri
       return $iri;
     }
 
@@ -2613,8 +2625,8 @@ class JsonLdProcessor {
           array_splice($active_ctx->keywords->{$kw},
             in_array($key, $active_ctx->keywords->{$kw}), 1);
         }
-        unset($active_ctx->mappings->{$key});
       }
+      $active_ctx->mappings->{$key} = (object)array('@id' => null);
       $defined->{$key} = true;
       return;
     }
@@ -2635,7 +2647,7 @@ class JsonLdProcessor {
             array($this, '_compareShortestLeast'));
         }
       }
-      else {
+      else if($value !== null) {
         // expand value to a full IRI
         $value = $this->_expandContextIri(
           $active_ctx, $ctx, $value, $base, $defined);
@@ -2739,8 +2751,10 @@ class JsonLdProcessor {
       $mapping->{'@language'} = $language;
     }
 
-    // merge onto parent mapping if one exists for a prefix
-    if($prefix !== null && property_exists($active_ctx->mappings, $prefix)) {
+    // if not a null mapping, merge onto parent mapping if one exists for
+    // a prefix
+    if($mapping->{'@id'} !== null && $prefix !== null &&
+      property_exists($active_ctx->mappings, $prefix)) {
       $child = $mapping;
       $mapping = self::copy($active_ctx->mappings->{$prefix});
       foreach($child as $k => $v) {
@@ -2776,8 +2790,8 @@ class JsonLdProcessor {
     // recurse if value is a term
     if(property_exists($active_ctx->mappings, $value)) {
       $id = $active_ctx->mappings->{$value}->{'@id'};
-      // value is already an absolute IRI
-      if($value === $id) {
+      // value is already an absolute IRI or id is a null mapping
+      if($value === $id || $id === null) {
         return $value;
       }
       return $this->_expandContextIri($active_ctx, $ctx, $id, $base, $defined);
@@ -2807,8 +2821,10 @@ class JsonLdProcessor {
       // recurse if prefix is defined
       if(property_exists($active_ctx->mappings, $prefix)) {
         $id = $active_ctx->mappings->{$prefix}->{'@id'};
-        return $this->_expandContextIri(
-          $active_ctx, $ctx, $id, $base, $defined) . $suffix;
+        if($id !== null) {
+          return $this->_expandContextIri(
+            $active_ctx, $ctx, $id, $base, $defined) . $suffix;
+        }
       }
 
       // consider value an absolute IRI
