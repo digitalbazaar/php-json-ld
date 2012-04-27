@@ -685,7 +685,7 @@ class JsonLdProcessor {
           return false;
         }
 
-        foreach($objects as $oi => $o) {
+        foreach($objects as $o) {
           // s2 is missing s1 object
           if(!self::hasValue($s2, $p, $o)) {
             return false;
