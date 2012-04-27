@@ -425,7 +425,7 @@ class JsonLdProcessor {
    *
    * @return stdClass the new active context.
    */
-  public function processContext($active_ctx, $local_ctx) {
+  public function processContext($active_ctx, $local_ctx, $options) {
     // return initial context early for null context
     if($local_ctx === null) {
       return $this->_getInitialContext();
