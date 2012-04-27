@@ -2620,7 +2620,6 @@ class JsonLdProcessor {
         }
 
         // uniquely add key as a keyword alias and resort
-        $aliases = $active_ctx->keywords->{$value};
         if(in_array($key, $active_ctx->keywords->{$value}) === false) {
           $active_ctx->keywords->{$value}[] = $key;
           usort($active_ctx->keywords->{$value},
