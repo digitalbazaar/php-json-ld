@@ -838,7 +838,7 @@ class JsonLdProcessor {
       // compact subject references
       if(self::_isSubjectReference($element)) {
         $type = self::getContextValue($ctx, $property, '@type');
-        if($type === '@id') {
+        if($type === '@id' || $property === '@graph') {
           $element = $this->_compactIri($ctx, $element->{'@id'});
           return $element;
         }
@@ -1000,14 +1000,9 @@ class JsonLdProcessor {
           'jsonld.SyntaxError', array('value' => $value));
       }
 
-      // @type must be a string, array of strings, or an empty JSON object
-      if($prop === '@type' &&
-        !(is_string($value) || self::_isArrayOfStrings($value) ||
-        self::_isEmptyObject($value))) {
-        throw new JsonLdException(
-          'Invalid JSON-LD syntax; "@type" value must a string, an array ' +
-          'of strings, or an empty object.',
-          'jsonld.SyntaxError', array('value' => $value));
+      // validate @type value
+      if($prop === '@type') {
+        $this->_validateTypeValue($value);
       }
 
       // @graph must be an array or an object
@@ -1057,6 +1052,25 @@ class JsonLdProcessor {
           if($container === '@list') {
             // ensure value is an array
             $value = (object)array('@list' => self::arrayify($value));
+          }
+        }
+
+        // optimize away @id for @type
+        if($prop === '@type') {
+          if(self::_isSubjectReference($value)) {
+            $value = $value->{'@id'};
+          }
+          else if(is_array($value)) {
+            $val = array();
+            foreach($value as $v) {
+              if(self::_isSubjectReference($v)) {
+                $val[] = $v->{'@id'};
+              }
+              else {
+                $val[] = $v;
+              }
+            }
+            $value = $val;
           }
         }
 
@@ -1363,8 +1377,8 @@ class JsonLdProcessor {
       // get type definition from context
       $type = self::getContextValue($ctx, $property, '@type');
 
-      // do @id expansion
-      if($type === '@id') {
+      // do @id expansion (automatic for @graph)
+      if($type === '@id' || $prop === '@graph') {
         $rval = (object)array('@id' => $this->_expandTerm($ctx, $value, $base));
       }
       // other type
@@ -2427,11 +2441,6 @@ class JsonLdProcessor {
       return $iri;
     }
 
-    // compact rdf:type
-    if($iri === self::RDF_TYPE) {
-      return '@type';
-    }
-
     // term is a keyword
     if(self::_isKeyword($iri)) {
       // return alias if available
@@ -2656,8 +2665,12 @@ class JsonLdProcessor {
           'jsonld.SyntaxError', array('context' => $ctx));
       }
 
-      // expand @id to full IRI
-      $id = $this->_expandContextIri($active_ctx, $ctx, $id, $base, $defined);
+      // expand @id if it is not @type
+      if($id !== '@type') {
+        // expand @id to full IRI
+        $id = $this->_expandContextIri(
+          $active_ctx, $ctx, $id, $base, $defined);
+      }
 
       // add @id to mapping
       $mapping->{'@id'} = $id;
@@ -3022,24 +3035,24 @@ class JsonLdProcessor {
   /**
    * Returns whether or not the given value is a keyword (or a keyword alias).
    *
-   * @param string $value the value to check.
+   * @param string $v the value to check.
    * @param stdClass [$ctx] the active context to check against.
    *
    * @return bool true if the value is a keyword, false if not.
    */
-  protected static function _isKeyword($value, $ctx=null) {
+  protected static function _isKeyword($v, $ctx=null) {
     if($ctx !== null) {
-      if(property_exists($ctx->keywords, $value)) {
+      if(property_exists($ctx->keywords, $v)) {
         return true;
       }
       foreach($ctx->keywords as $kw => $aliases) {
-        if(in_array($value, $aliases) !== false) {
+        if(in_array($v, $aliases) !== false) {
           return true;
         }
       }
     }
     else {
-      switch($value) {
+      switch($v) {
       case '@context':
       case '@container':
       case '@default':
@@ -3061,125 +3074,136 @@ class JsonLdProcessor {
   }
 
   /**
-   * Returns true if the given input is an empty Object.
+   * Returns true if the given value is an empty Object.
    *
-   * @param mixed $input the input to check.
+   * @param mixed $v the value to check.
    *
-   * @return bool true if the input is an empty Object, false if not.
+   * @return bool true if the value is an empty Object, false if not.
    */
-  protected static function _isEmptyObject($input) {
-    return is_object($input) && count(get_object_vars($input)) === 0;
+  protected static function _isEmptyObject($v) {
+    return is_object($v) && count(get_object_vars($v)) === 0;
   }
 
   /**
-   * Returns true if the given input is an Array of Strings.
+   * Throws an exception if the given value is not a valid @type value.
    *
-   * @param mixed $input the input to check.
-   *
-   * @return bool true if the input is an Array of Strings, false if not.
+   * @param mixed $v the value to check.
    */
-  protected static function _isArrayOfStrings($input) {
-    if(!is_array($input)) {
-      return false;
+  protected static function _validateTypeValue($v) {
+    // must be a string, subject reference, or empty object
+    if(is_string($v) || self::_isSubjectReference($v) ||
+      self::_isEmptyObject($v)) {
+      return;
     }
-    foreach($input as $v) {
-      if(!is_string($v)) {
-        return false;
+
+    // must be an array
+    $is_valid = false;
+    if(is_array($v)) {
+      $is_valid = true;
+      foreach($v as $e) {
+        if(!(is_string($e) || self::_isSubjectReference($e))) {
+          $is_valid = false;
+          break;
+        }
       }
     }
-    return true;
+
+    if(!$is_valid) {
+      throw new JsonLdException(
+        'Invalid JSON-LD syntax; "@type" value must a string, an array ' +
+        'of strings, or an empty object.',
+        'jsonld.SyntaxError', array('value' => $v));
+    }
   }
 
   /**
    * Returns true if the given value is a subject with properties.
    *
-   * @param mixed $value the value to check.
+   * @param mixed $v the value to check.
    *
    * @return bool true if the value is a subject with properties, false if not.
    */
-  protected static function _isSubject($value) {
-    $rval = false;
-
+  protected static function _isSubject($v) {
     // Note: A value is a subject if all of these hold true:
     // 1. It is an Object.
     // 2. It is not a @value, @set, or @list.
     // 3. It has more than 1 key OR any existing key is not @id.
-    if(is_object($value) &&
-      !property_exists($value, '@value') &&
-      !property_exists($value, '@set') &&
-      !property_exists($value, '@list')) {
-      $count = count(get_object_vars($value));
-      $rval = ($count > 1 || !property_exists($value, '@id'));
+    $rval = false;
+    if(is_object($v) &&
+      !property_exists($v, '@value') &&
+      !property_exists($v, '@set') &&
+      !property_exists($v, '@list')) {
+      $count = count(get_object_vars($v));
+      $rval = ($count > 1 || !property_exists($v, '@id'));
     }
-
     return $rval;
   }
 
   /**
    * Returns true if the given value is a subject reference.
    *
-   * @param mixed $value the value to check.
+   * @param mixed $v the value to check.
    *
    * @return bool true if the value is a subject reference, false if not.
    */
-  protected static function _isSubjectReference($value) {
+  protected static function _isSubjectReference($v) {
     // Note: A value is a subject reference if all of these hold true:
     // 1. It is an Object.
     // 2. It has a single key: @id.
-    return (is_object($value) && count(get_object_vars($value)) === 1 &&
-      property_exists($value, '@id'));
+    return (is_object($v) && count(get_object_vars($v)) === 1 &&
+      property_exists($v, '@id'));
   }
 
   /**
    * Returns true if the given value is a @value.
    *
-   * @param mixed $value the value to check.
+   * @param mixed $v the value to check.
    *
    * @return bool true if the value is a @value, false if not.
    */
-  protected static function _isValue($value) {
+  protected static function _isValue($v) {
     // Note: A value is a @value if all of these hold true:
     // 1. It is an Object.
     // 2. It has the @value property.
-    return is_object($value) && property_exists($value, '@value');
+    return is_object($v) && property_exists($v, '@value');
   }
 
   /**
    * Returns true if the given value is a @list.
    *
-   * @param mixed $value the value to check.
+   * @param mixed $v the value to check.
    *
    * @return bool true if the value is a @list, false if not.
    */
-  protected static function _isList($value) {
+  protected static function _isList($v) {
     // Note: A value is a @list if all of these hold true:
     // 1. It is an Object.
     // 2. It has the @list property.
-    return is_object($value) && property_exists($value, '@list');
+    return is_object($v) && property_exists($v, '@list');
   }
 
   /**
    * Returns true if the given value is a blank node.
    *
-   * @param mixed $value the value to check.
+   * @param mixed $v the value to check.
    *
    * @return bool true if the value is a blank node, false if not.
    */
-  protected static function _isBlankNode($value) {
-    $rval = false;
+  protected static function _isBlankNode($v) {
     // Note: A value is a blank node if all of these hold true:
     // 1. It is an Object.
     // 2. If it has an @id key its value begins with '_:'.
     // 3. It has no keys OR is not a @value, @set, or @list.
-    if(is_object($value)) {
-      if(property_exists($value, '@id')) {
-        $rval = (strpos($value->{'@id'}, '_:') === 0);
+    $rval = false;
+    if(is_object($v)) {
+      if(property_exists($v, '@id')) {
+        $rval = (strpos($v->{'@id'}, '_:') === 0);
       }
       else {
-        $rval = (count(get_object_vars($value)) === 0 ||
-          !(property_exists($value, '@value') ||
-            property_exists($value, '@set') ||
-            property_exists($value, '@list')));
+        $rval = (count(get_object_vars($v)) === 0 ||
+          !(property_exists($v, '@value') ||
+            property_exists($v, '@set') ||
+            property_exists($v, '@list')));
       }
     }
     return $rval;
@@ -3188,12 +3212,12 @@ class JsonLdProcessor {
   /**
    * Returns true if the given value is an absolute IRI, false if not.
    *
-   * @param string $value the value to check.
+   * @param string $v the value to check.
    *
    * @return bool true if the value is an absolute IRI, false if not.
    */
-  protected static function _isAbsoluteIri($value) {
-    return strpos($value, ':') !== false;
+  protected static function _isAbsoluteIri($v) {
+    return strpos($v, ':') !== false;
   }
 }
 
