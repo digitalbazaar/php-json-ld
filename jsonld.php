@@ -1670,6 +1670,10 @@ class JsonLdProcessor {
     }
 
     if(is_string($element)) {
+      // property can be null for string subject references in @graph
+      if($property === null) {
+        return;
+      }
       // emit IRI for rdf:type, else plain literal
       $statement = (object)array(
         'subject' => self::copy($subject),
