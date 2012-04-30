@@ -110,7 +110,7 @@ function jsonld_normalize($input, $options=array()) {
  * @param mixed $statements a serialized string of RDF statements in a format
  *          specified by the format option or an array of the RDF statements
  *          to convert.
- * @param assoc [options] the options to use:
+ * @param assoc [$options] the options to use:
  *          [format] the format if input is a string:
  *            'application/nquads' for N-Quads (default).
  *          [notType] true to use rdf:type, false to use @type (default).
@@ -127,6 +127,9 @@ function jsonld_from_rdf($input, $options=array()) {
  *
  * @param mixed $input the JSON-LD object.
  * @param assoc [$options] the options to use:
+ *          [base] the base IRI to use.
+ *          [format] the format to use to output a string:
+ *            'application/nquads' for N-Quads (default).
  *          [resolver(url, callback(err, jsonCtx))] the URL resolver to use.
  *
  * @return array all RDF statements in the JSON-LD object.
@@ -415,7 +418,7 @@ class JsonLdProcessor {
    * @param mixed $statements a serialized string of RDF statements in a format
    *          specified by the format option or an array of the RDF statements
    *          to convert.
-   * @param assoc options the options to use:
+   * @param assoc $options the options to use:
    *          [format] the format if input is a string:
    *            'application/nquads' for N-Quads (default).
    *          [notType] true to use rdf:type, false to use @type (default).
@@ -448,9 +451,12 @@ class JsonLdProcessor {
    *
    * @param mixed $input the JSON-LD object.
    * @param assoc $options the options to use:
+   *          [base] the base IRI to use.
+   *          [format] the format to use to output a string:
+   *            'application/nquads' for N-Quads (default).
    *          [resolver(url, callback(err, jsonCtx))] the URL resolver to use.
    *
-   * @return array the RDF statements.
+   * @return array all RDF statements in the JSON-LD object.
    */
   public function toRDF($input, $options) {
     // set default options
@@ -458,12 +464,40 @@ class JsonLdProcessor {
     // FIXME: implement jsonld_resolve_url
     isset($options['resolver']) or $options['resolver'] = 'jsonld_resolve_url';
 
-    // resolve all @context URLs in the input
-    $input = self::copy($input);
-    $this->_resolveUrls($input, $options['resolver']);
+    try {
+      // expand input
+      $expanded = $this->expand($input, $options);
+    }
+    catch(JsonLdException $e) {
+      throw new JsonLdException(
+        'Could not expand input before conversion to RDF.',
+        'jsonld.RdfError', $e);
+    }
+
+    // get RDF statements
+    $namer = new UniqueNamer('_:t');
+    $statements = array();
+    $this->_toRDF($expanded, $namer, null, null, null, $statements);
+
+    // convert to output format
+    if(isset($options['format'])) {
+      // supported formats
+      if($options['format'] === 'application/nquads') {
+        $nquads = '';
+        foreach($statements as $statement) {
+          $nquads .= $this->_toNQuad($statement);
+        }
+        $statements = $nquads;
+      }
+      else {
+        throw new JsonLdException(
+          'Unknown output format.',
+          'jsonld.UnknownFormat', array('format' => $options['format']));
+      }
+    }
 
     // output RDF statements
-    return $this->_toRDF($input);
+    return $statements;
   }
 
   /**
@@ -1516,15 +1550,174 @@ class JsonLdProcessor {
   }
 
   /**
-   * Outputs the RDF statements found in the given JSON-LD object.
+   * Outputs the RDF statements found in the given JSON-LD element.
    *
-   * @param mixed $input the JSON-LD object.
-   *
-   * @return array the RDF statements.
+   * @param mixed element the JSON-LD element.
+   * @param UniqueNamer namer the UniqueNamer for assigning bnode names.
+   * @param mixed subject the active subject.
+   * @param mixed property the active property.
+   * @param mixed graph the graph name.
+   * @param &array statements the array to add statements to.
    */
-  protected function _toRDF($input) {
-    // FIXME: implement
-    throw new JsonLdException('Not implemented', 'jsonld.NotImplemented');
+  protected function _toRDF(
+    $element, $namer, $subject, $property, $graph, &$statements) {
+    // recurse into arrays
+    if(is_array($element)) {
+      foreach($element as $e) {
+        $this->_toRDF($e, $namer, $subject, $property, $graph, $statements);
+      }
+      return;
+    }
+
+    if(is_object($element)) {
+      // convert @value to object
+      if(self::_isValue($element)) {
+        $object = (object)array(
+          'nominalValue' => $element->{'@value'},
+          'interfaceName' => 'LiteralNode');
+
+        if(property_exists($element, '@type')) {
+          $object->datatype = (object)array(
+            'nominalValue' => $element->{'@type'},
+            'interfaceName' => 'IRI');
+        }
+        else if(property_exists($element, '@language')) {
+          $object->language = $element->{'@language'};
+        }
+
+        // emit literal
+        $statement = (object)array(
+          'subject' => self::copy($subject),
+          'property' => self::copy($property),
+          'object' => $object);
+        if($graph !== null) {
+          $statement->name = $graph;
+        }
+        $statements[] = $statement;
+        return;
+      }
+
+      // convert @list
+      if(self::_isList($element)) {
+        $list = $this->_makeLinkedList($element);
+        $this->_toRDF($list, $namer, $subject, $property, $graph, $statements);
+        return;
+      }
+
+      // Note: element must be a subject
+
+      // get subject @id (generate one if it is a bnode)
+      $id = property_exists($element, '@id') ? $element->{'@id'} : null;
+      $is_bnode = self::_isBlankNode($element);
+      if($is_bnode) {
+        $id = $namer->getName($id);
+      }
+
+      // create object
+      $object = (object)array(
+        'nominalValue' => $id,
+        'interfaceName' => $is_bnode ? 'BlankNode' : 'IRI');
+
+      // emit statement if subject isn't null
+      if($subject !== null) {
+        $statement = (object)array(
+          'subject' => self::copy($subject),
+          'property' => self::copy($property),
+          'object' => self::copy($object));
+        if($graph !== null) {
+          $statement->name = $graph;
+        }
+        $statements[] = $statement;
+      }
+
+      // set new active subject to object
+      $subject = $object;
+
+      // recurse over subject properties in order
+      $props = array_keys((array)$element);
+      sort($props);
+      foreach($props as $prop) {
+        $p = $prop;
+
+        // convert @type to rdf:type
+        if($prop === '@type') {
+          $p = self::RDF_TYPE;
+        }
+
+        // recurse into @graph
+        if($prop === '@graph') {
+          $this->_toRDF(
+            $element->{$prop}, $namer, null, null, $subject, $statements);
+          continue;
+        }
+
+        // skip keywords
+        if(self::_isKeyword($p)) {
+          continue;
+        }
+
+        // create new active property
+        $property = (object)array(
+          'nominalValue' => $p,
+          'interfaceName' => 'IRI');
+
+        // recurse into value
+        $this->_toRDF(
+          $element->{$prop}, $namer, $subject, $property, $graph, $statements);
+      }
+
+      return;
+    }
+
+    if(is_string($element)) {
+      // emit IRI for rdf:type, else plain literal
+      $statement = (object)array(
+        'subject' => self::copy($subject),
+        'property' => self::copy($property),
+        'object' => (object)array(
+          'nominalValue' => $element,
+          'interfaceName' => (($property->nominalValue === self::RDF_TYPE) ?
+            'IRI' : 'LiteralNode')));
+      if($graph !== null) {
+        $statement->name = $graph;
+      }
+      $statements[] = $statement;
+      return;
+    }
+
+    if(is_bool($element) || is_double($element) || is_integer($element)) {
+      // convert to XSD datatype
+      if(is_bool($element)) {
+        $datatype = self::XSD_BOOLEAN;
+        $value = ($element ? 'true' : 'false');
+      }
+      else if(is_double($element)) {
+        $datatype = self::XSD_DOUBLE;
+        // do special JSON-LD double format, printf('%1.15e') equivalent
+        $value = preg_replace('/(e(?:\+|-))([0-9])$/', '${1}0${2}',
+          sprintf('%1.15e', $element));
+      }
+      else {
+        $datatype = self::XSD_INTEGER;
+        $value = strval($element);
+      }
+
+      // emit typed literal
+      $statement = (object)array(
+        'subject' => self::copy($subject),
+        'property' => self::copy($property),
+        'object' => (object)array(
+          'nominalValue' => $value,
+          'interfaceName' => 'LiteralNode',
+          'datatype' => (object)array(
+            'nominalValue' => $datatype,
+            'interfaceName' => 'IRI')));
+      if($graph !== null) {
+        $statement->name = $graph;
+      }
+      $statements[] = $statement;
+      return;
+    }
   }
 
   /**
@@ -1675,23 +1868,23 @@ class JsonLdProcessor {
     }
 
     // Note: safe to assume input is a subject/blank node
-    $isBnode = self::_isBlankNode($input);
+    $is_bnode = self::_isBlankNode($input);
 
     // name blank node if appropriate, use passed name if given
     if($name === null) {
       if(property_exists($input, '@id')) {
         $name = $input->{'@id'};
       }
-      if($isBnode) {
+      if($is_bnode) {
         $name = $namer->getName($name);
       }
     }
 
     // use a subject of '_:a' for blank node statements
-    $s = $isBnode ? '_:a' : $name;
+    $s = $is_bnode ? '_:a' : $name;
 
     // get statements for the blank node
-    if($isBnode) {
+    if($is_bnode) {
       if(!property_exists($bnodes, $name)) {
         $entries = $bnodes->{$name} = new ArrayObject();
       }
@@ -3645,15 +3838,15 @@ class JsonLdProcessor {
     $quad .= " <{$p->nominalValue}> ";
 
     // object is IRI, bnode, or literal
-    if(o.interfaceName === 'IRI') {
+    if($o->interfaceName === 'IRI') {
       $quad .= "<{$o->nominalValue}>";
     }
-    else if(o.interfaceName === 'BlankNode') {
+    else if($o->interfaceName === 'BlankNode') {
       $quad .= $o->nominalValue;
     }
     else {
       $quad .= '"' . $o->nominalValue . '"';
-      if(propert_exists($o, 'datatype')) {
+      if(property_exists($o, 'datatype')) {
         $quad .= "^^<{$o->datatype->nominalValue}>";
       }
       else if(property_exists($o, 'language')) {

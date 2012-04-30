@@ -282,6 +282,13 @@ class TestRunner {
           $test->expect = read_test_json($test->expect, $filepath);
           $result = jsonld_from_rdf($input, $options);
         }
+        else if(in_array('jld:ToRDFTest', $type)) {
+          $this->test($test->name);
+          $input = read_test_json($test->input, $filepath);
+          $test->expect = read_test_nquads($test->expect, $filepath);
+          $options['format'] = 'application/nquads';
+          $result = jsonld_to_rdf($input, $options);
+        }
         else {
           echo "Skipping test \"{$test->name}\" of type: " .
             json_encode($type) . $eol;
