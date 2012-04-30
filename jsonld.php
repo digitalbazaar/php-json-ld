@@ -1478,9 +1478,9 @@ class JsonLdProcessor {
         }
         // convert double to @value
         else if(is_double($o)) {
-          // do special JSON-LD double format, printf('%1.16e') equivalent
+          // do special JSON-LD double format, printf('%1.15e') equivalent
           $o = preg_replace('/(e(?:\+|-))([0-9])$/', '${1}0${2}',
-            sprintf('%1.16e', $o));
+            sprintf('%1.15e', $o));
           $o = (object)array('@value' => $o, '@type' => self::XSD_DOUBLE);
         }
         // convert integer to @value
@@ -2832,7 +2832,7 @@ class JsonLdProcessor {
     }
 
     // prepend base
-    $value = "$base$value";
+    $value = $this->_prependBase($base, $value);
 
     // value must now be an absolute IRI
     if(!self::_isAbsoluteIri($value)) {
@@ -2897,7 +2897,7 @@ class JsonLdProcessor {
     }
 
     // prepend base to term
-    return "$base$term";
+    return $this->_prependBase($base, $term);
   }
 
   /**
@@ -3020,6 +3020,30 @@ class JsonLdProcessor {
 
     // do url replacement
     return $findUrls($input, true);
+  }
+
+  /**
+   * Prepends a base IRI to the given relative IRI.
+   *
+   * @param string $base the base IRI.
+   * @param string $iri the relative IRI.
+   *
+   * @return string the absolute IRI.
+   */
+  protected function _prependBase($base, $iri) {
+    if($iri === '' || strpos($iri, '#') === 0) {
+      return "$base$iri";
+    }
+    else {
+      // prepend last directory for base
+      $idx = strrpos($base, '/');
+      if($idx === false) {
+        return $iri;
+      }
+      else {
+        return substr($base, 0, $idx + 1) . $iri;
+      }
+    }
   }
 
   /**
