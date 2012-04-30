@@ -83,6 +83,27 @@ function read_test_json($file, $filepath) {
   }
 }
 
+/**
+ * Reads test N-Quads files.
+ *
+ * @param string $file the file to read.
+ * @param string $filepath the test filepath.
+ *
+ * @return string the read N-Quads.
+ */
+function read_test_nquads($file, $filepath) {
+  global $eol;
+
+  try {
+    $file = $filepath . '/' . $file;
+    return file_get_contents($file);
+  }
+  catch(Exception $e) {
+    echo "Exception while parsing file: '$file'$eol";
+    throw $e;
+  }
+}
+
 class TestRunner {
   public function __construct() {
     // set up groups, add root group
@@ -254,6 +275,12 @@ class TestRunner {
           $test->frame = read_test_json($test->frame, $filepath);
           $test->expect = read_test_json($test->expect, $filepath);
           $result = jsonld_frame($input, $test->frame, $options);
+        }
+        else if(in_array('jld:FromRDFTest', $type)) {
+          $this->test($test->name);
+          $input = read_test_nquads($test->input, $filepath);
+          $test->expect = read_test_json($test->expect, $filepath);
+          $result = jsonld_from_rdf($input, $options);
         }
         else {
           echo "Skipping test \"{$test->name}\" of type: " .

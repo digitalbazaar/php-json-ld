@@ -105,6 +105,24 @@ function jsonld_normalize($input, $options=array()) {
 }
 
 /**
+ * Converts RDF statements into JSON-LD.
+ *
+ * @param mixed $statements a serialized string of RDF statements in a format
+ *          specified by the format option or an array of the RDF statements
+ *          to convert.
+ * @param assoc [options] the options to use:
+ *          [format] the format if input is a string:
+ *            'application/nquads' for N-Quads (default).
+ *          [notType] true to use rdf:type, false to use @type (default).
+ *
+ * @return array the JSON-LD output.
+ */
+function jsonld_from_rdf($input, $options=array()) {
+  $p = new JsonLdProcessor();
+  return $p->fromRDF($input, $options);
+}
+
+/**
  * Outputs the RDF statements found in the given JSON-LD object.
  *
  * @param mixed $input the JSON-LD object.
@@ -115,7 +133,7 @@ function jsonld_normalize($input, $options=array()) {
  */
 function jsonld_to_rdf($input, $options=array()) {
   $p = new JsonLdProcessor();
-  return $p->toRdf($input, $options);
+  return $p->toRDF($input, $options);
 }
 
 /**
@@ -389,6 +407,40 @@ class JsonLdProcessor {
 
     // do normalization
     return $this->_normalize($expanded);
+  }
+
+  /**
+   * Converts RDF statements into JSON-LD.
+   *
+   * @param mixed $statements a serialized string of RDF statements in a format
+   *          specified by the format option or an array of the RDF statements
+   *          to convert.
+   * @param assoc options the options to use:
+   *          [format] the format if input is a string:
+   *            'application/nquads' for N-Quads (default).
+   *          [notType] true to use rdf:type, false to use @type (default).
+   *
+   * @return array the JSON-LD output.
+   */
+  public function fromRDF($statements, $options) {
+    // set default options
+    isset($options['format']) or $options['format'] = 'application/nquads';
+    isset($options['notType']) or $options['notType'] = false;
+
+    if(is_string($statements)) {
+      // supported formats
+      if($options['format'] === 'application/nquads') {
+        $statements = $this->_parseNQuads($statements);
+      }
+      else {
+        throw new JsonLdException(
+          'Unknown input format.',
+          'jsonld.UnknownFormat', array('format' => $options['format']));
+      }
+    }
+
+    // convert from RDF
+    return $this->_fromRDF($statements, $options);
   }
 
   /**
@@ -1298,6 +1350,172 @@ class JsonLdProcessor {
   }
 
   /**
+   * Converts RDF statements into JSON-LD.
+   *
+   * @param array $statements the RDF statements.
+   * @param assoc $options the RDF conversion options.
+   */
+  protected function _fromRDF($statements, $options) {
+    // prepare graph map (maps graph name => subjects, lists, etc)
+    $default_graph = (object)array(
+      'subjects' => new stdClass(), 'listMap' => new stdClass());
+    $graphs = new stdClass();
+
+    foreach($statements as $statement) {
+      // get subject, property, object, and graph name (default to '')
+      $s = $statement->subject->nominalValue;
+      $p = $statement->property->nominalValue;
+      $o = $statement->object;
+      $name = (property_exists($statement, 'name') ?
+        $statement->name->nominalValue : '');
+
+      // use default graph
+      if($name === '') {
+        $graph = $default_graph;
+      }
+      // create a named graph entry as needed
+      else if(!property_exists($graphs, $name)) {
+        $graph = $graphs->{$name} = (object)array(
+          'subjects' => new stdClass(), 'listMap' => new stdClass());
+      }
+      else {
+        $graph = $graphs->{$name};
+      }
+
+      // handle element in @list
+      if($p === self::RDF_FIRST) {
+        // create list entry as needed
+        $list_map = $graph->listMap;
+        if(!property_exists($list_map, $s)) {
+          $entry = $list_map->{$s} = new stdClass();
+        }
+        else {
+          $entry = $list_map->{$s};
+        }
+        // set object value
+        $entry->first = $this->_rdfToObject($o);
+        continue;
+      }
+
+      // handle other element in @list
+      if($p === self::RDF_REST) {
+        // set next in list
+        if($o->interfaceName === 'BlankNode') {
+          // create list entry as needed
+          $list_map = $graph->listMap;
+          if(!property_exists($list_map, $s)) {
+            $entry = $list_map->{$s} = new stdClass();
+          }
+          else {
+            $entry = $list_map->{$s};
+          }
+          $entry->rest = $o->nominalValue;
+        }
+        continue;
+      }
+
+      // if graph is not the default graph
+      if($name !== '') {
+        // add graph subject to default graph as needed
+        if(!property_exists($default_graph->subjects, $name)) {
+          $value = $default_graph->subjects->{$name} = (object)array(
+            '@id' => $name);
+        }
+        else {
+          $value = $default_graph->subjects->{$name};
+        }
+      }
+
+      // add subject to graph as needed
+      $subjects = $graph->subjects;
+      if(!property_exists($subjects, $s)) {
+        $value = $subjects->{$s} = (object)array('@id' => $s);
+      }
+      // use existing subject value
+      else {
+        $value = $subjects->{$s};
+      }
+
+      // convert to @type unless options indicate to treat rdf:type as property
+      if($p === self::RDF_TYPE && !$options['notType']) {
+        // add value of object as @type
+        self::addValue($value, '@type', $o->nominalValue, true);
+      }
+      else {
+        // add property to value as needed
+        $object = $this->_rdfToObject($o);
+        self::addValue($value, $p, $object, true);
+
+        // a bnode might be the beginning of a list, so add it to the list map
+        if($o->interfaceName === 'BlankNode') {
+          $id = $object->{'@id'};
+          $list_map = $graph->listMap;
+          if(!property_exists($list_map, $id)) {
+            $entry = $list_map->{$id} = new stdClass();
+          }
+          else {
+            $entry = $list_map->{$id};
+          }
+          $entry->head = $object;
+        }
+      }
+    }
+
+    // build @lists
+    $all_graphs = array_values((array)$graphs);
+    $all_graphs[] = $default_graph;
+    foreach($all_graphs as $graph) {
+      // find list head
+      $list_map = $graph->listMap;
+      foreach($list_map as $subject => $entry) {
+        // head found, build lists
+        if(property_exists($entry, 'head') &&
+          property_exists($entry, 'first')) {
+          // replace bnode @id with @list
+          $value = $entry->head;
+          unset($value->{'@id'});
+          $list = array($entry->first);
+          while(property_exists($entry, 'rest')) {
+            $rest = $entry->rest;
+            $entry = $list_map->{$rest};
+            if(!property_exists($entry, 'first')) {
+              throw new JsonLdException(
+                'Invalid RDF list entry.',
+                'jsonld.RdfError', array('bnode' => $rest));
+            }
+            $list[] = $entry->first;
+          }
+          $value->{'@list'} = $list;
+        }
+      }
+    }
+
+    // build default graph in subject @id order
+    $output = array();
+    $subjects = $default_graph->subjects;
+    $ids = array_keys((array)$subjects);
+    sort($ids);
+    foreach($ids as $i => $id) {
+      // add subject to default graph
+      $subject = $subjects->{$id};
+      $output[] = $subject;
+
+      // output named graph in subject @id order
+      if(property_exists($graphs, $id)) {
+        $graph = array();
+        $_subjects = $graphs->{$id}->subjects;
+        $_ids = array_keys((array)$_subjects);
+        sort($_ids);
+        foreach($_ids as $_i => $_id) {
+          $graph[] = $_subjects->{$_id};
+        }
+        $subject->{'@graph'} = $graph;
+      }
+    }
+    return $output;
+  }
+
+  /**
    * Outputs the RDF statements found in the given JSON-LD object.
    *
    * @param mixed $input the JSON-LD object.
@@ -1399,6 +1617,39 @@ class JsonLdProcessor {
             '@value' => strval($value), '@language' => $language);
         }
       }
+    }
+
+    return $rval;
+  }
+
+  /**
+   * Converts an RDF statement object to a JSON-LD object.
+   *
+   * @param stdClass $o the RDF statement object to convert.
+   *
+   * @return stdClass the JSON-LD object.
+   */
+  protected function _rdfToObject($o) {
+    // convert empty list
+    if($o->interfaceName === 'IRI' && $o->nominalValue === self::RDF_NIL) {
+      return (object)array('@list' => array());
+    }
+
+    // convert IRI/BlankNode object to JSON-LD
+    if($o->interfaceName === 'IRI' || $o->interfaceName === 'BlankNode') {
+      return (object)array('@id' => $o->nominalValue);
+    }
+
+    // convert literal object to JSON-LD
+    $rval = (object)array('@value' => $o->nominalValue);
+
+    // add datatype
+    if(property_exists($o, 'datatype')) {
+      $rval->{'@type'} = $o->datatype->nominalValue;
+    }
+    // add language
+    else if(property_exists($o, 'language')) {
+      $rval->{'@language'} = $o->language;
     }
 
     return $rval;
@@ -3258,6 +3509,165 @@ class JsonLdProcessor {
    */
   protected static function _isAbsoluteIri($v) {
     return strpos($v, ':') !== false;
+  }
+
+  /**
+   * Parses statements in the form of N-Quads.
+   *
+   * @param string $input the N-Quads input to parse.
+   *
+   * @return array the resulting RDF statements.
+   */
+  protected static function _parseNQuads($input) {
+    // define partial regexes
+    $iri = '(?:<([^:]+:[^>]*)>)';
+    $bnode = '(_:(?:[A-Za-z][A-Za-z0-9]*))';
+    $plain = '"([^"\\\\]*(?:\\\\.[^"\\\\]*)*)"';
+    $datatype = "(?:\\^\\^$iri)";
+    $language = '(?:@([a-z]+(?:-[a-z0-9]+)*))';
+    $literal = "(?:$plain(?:$datatype|$language)?)";
+    $ws = '[ \t]';
+    $eoln = '/(?:\r\n)|(?:\n)|(?:\r)/';
+    $empty = "/^$ws*$/";
+
+    // define quad part regexes
+    $subject = "(?:$iri|$bnode)$ws+";
+    $property = "$iri$ws+";
+    $object = "(?:$iri|$bnode|$literal)$ws*";
+    $graph = "(?:\\.|(?:(?:$iri|$bnode)$ws*\\.))";
+
+    // full quad regex
+    $quad = "/^$ws*$subject$property$object$graph$ws*$/";
+
+    // build RDF statements
+    $statements = array();
+
+    // split N-Quad input into lines
+    $lines = preg_split($eoln, $input);
+    $line_number = 0;
+    foreach($lines as $line) {
+      $line_number += 1;
+
+      // skip empty lines
+      if(preg_match($empty, $line)) {
+        continue;
+      }
+
+      // parse quad
+      if(!preg_match($quad, $line, $match)) {
+        throw new JsonLdException(
+          'Error while parsing N-Quads; invalid quad.',
+          'jsonld.ParseError', array('line' => $line_number));
+      }
+
+      // create RDF statement
+      $s = (object)array(
+        'subject' => new stdClass(),
+        'property' => new stdClass(),
+        'object' => new stdClass());
+
+      // get subject
+      if($match[1] !== '') {
+        $s->subject->nominalValue = $match[1];
+        $s->subject->interfaceName = 'IRI';
+      }
+      else {
+        $s->subject->nominalValue = $match[2];
+        $s->subject->interfaceName = 'BlankNode';
+      }
+
+      // get property
+      $s->property->nominalValue = $match[3];
+      $s->property->interfaceName = 'IRI';
+
+      // get object
+      if($match[4] !== '') {
+        $s->object->nominalValue = $match[4];
+        $s->object->interfaceName = 'IRI';
+      }
+      else if($match[5] !== '') {
+        $s->object->nominalValue = $match[5];
+        $s->object->interfaceName = 'BlankNode';
+      }
+      else {
+        $s->object->nominalValue = $match[6];
+        $s->object->interfaceName = 'LiteralNode';
+        if(isset($match[7]) && $match[7] !== '') {
+          $s->object->datatype = (object)array(
+            'nominalValue' => $match[7], 'interfaceName' => 'IRI');
+        }
+        else if(isset($match[8]) && $match[8] !== '') {
+          $s->object->language = $match[8];
+        }
+      }
+
+      // get graph
+      if(isset($match[9]) && $match[9] !== '') {
+        $s->name = (object)array(
+          'nominalValue' => $match[9], 'interfaceName' => 'IRI');
+      }
+      else if(isset($match[10]) && $match[10] !== '') {
+        $s->name = (object)array(
+          'nominalValue' => $match[10], 'interfaceName' => 'BlankNode');
+      }
+
+      // add statement
+      $statements[] = $s;
+    }
+
+    return $statements;
+  }
+
+  /**
+   * Converts an RDF statement to an N-Quad string (a single quad).
+   *
+   * @param stdClass $statement the RDF statement to convert.
+   *
+   * @return the N-Quad string.
+   */
+  protected static function _toNQuad($statement) {
+    $s = $statement->subject;
+    $p = $statement->property;
+    $o = $statement->object;
+    $g = property_exists($statement, 'name') ? $statement->name : null;
+
+    $quad = '';
+
+    // subject is an IRI or bnode
+    if($s->interfaceName === 'IRI') {
+      $quad .= "<{$s->nominalValue}>";
+    }
+    else {
+      $quad .= $s->nominalValue;
+    }
+
+    // property is always an IRI
+    $quad .= " <{$p->nominalValue}> ";
+
+    // object is IRI, bnode, or literal
+    if(o.interfaceName === 'IRI') {
+      $quad .= "<{$o->nominalValue}>";
+    }
+    else if(o.interfaceName === 'BlankNode') {
+      $quad .= $o->nominalValue;
+    }
+    else {
+      $quad .= '"' . $o->nominalValue . '"';
+      if(propert_exists($o, 'datatype')) {
+        $quad .= "^^<{$o->datatype->nominalValue}>";
+      }
+      else if(property_exists($o, 'language')) {
+        $quad .= '@' . $o->language;
+      }
+    }
+
+    // graph
+    if($g !== null) {
+      $quad .= " <{$g->nominalValue}>";
+    }
+
+    $quad .= " .\n";
+    return $quad;
   }
 }
 
