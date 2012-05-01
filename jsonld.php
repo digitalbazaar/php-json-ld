@@ -1563,14 +1563,6 @@ class JsonLdProcessor {
    */
   protected function _toRDF(
     $element, $namer, $subject, $property, $graph, &$statements) {
-    // recurse into arrays
-    if(is_array($element)) {
-      foreach($element as $e) {
-        $this->_toRDF($e, $namer, $subject, $property, $graph, $statements);
-      }
-      return;
-    }
-
     if(is_object($element)) {
       // convert @value to object
       if(self::_isValue($element)) {
@@ -1668,6 +1660,14 @@ class JsonLdProcessor {
           $element->{$prop}, $namer, $subject, $property, $graph, $statements);
       }
 
+      return;
+    }
+
+    if(is_array($element)) {
+      // recurse into arrays
+      foreach($element as $e) {
+        $this->_toRDF($e, $namer, $subject, $property, $graph, $statements);
+      }
       return;
     }
 
@@ -3725,7 +3725,7 @@ class JsonLdProcessor {
     $datatype = "(?:\\^\\^$iri)";
     $language = '(?:@([a-z]+(?:-[a-z0-9]+)*))';
     $literal = "(?:$plain(?:$datatype|$language)?)";
-    $ws = '[ \t]';
+    $ws = '[ \\t]';
     $eoln = '/(?:\r\n)|(?:\n)|(?:\r)/';
     $empty = "/^$ws*$/";
 
