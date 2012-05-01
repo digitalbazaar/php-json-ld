@@ -1388,9 +1388,11 @@ class JsonLdProcessor {
    *
    * @param array $statements the RDF statements.
    * @param assoc $options the RDF conversion options.
+   *
+   * @return array the JSON-LD output.
    */
   protected function _fromRDF($statements, $options) {
-    // prepare graph map (maps graph name => subjects, lists, etc)
+    // prepare graph map (maps graph name => subjects, lists)
     $default_graph = (object)array(
       'subjects' => new stdClass(), 'listMap' => new stdClass());
     $graphs = new stdClass();
@@ -1452,11 +1454,10 @@ class JsonLdProcessor {
       if($name !== '') {
         // add graph subject to default graph as needed
         if(!property_exists($default_graph->subjects, $name)) {
-          $value = $default_graph->subjects->{$name} = (object)array(
-            '@id' => $name);
+          $default_graph->subjects->{$name} = (object)array('@id' => $name);
         }
         else {
-          $value = $default_graph->subjects->{$name};
+          $default_graph->subjects->{$name};
         }
       }
 
