@@ -483,11 +483,12 @@ class JsonLdProcessor {
     if(isset($options['format'])) {
       // supported formats
       if($options['format'] === 'application/nquads') {
-        $nquads = '';
+        $nquads = array();
         foreach($statements as $statement) {
-          $nquads .= $this->_toNQuad($statement);
+          $nquads[] = $this->_toNQuad($statement);
         }
-        $statements = $nquads;
+        sort($nquads);
+        $statements = implode($nquads);
       }
       else {
         throw new JsonLdException(
