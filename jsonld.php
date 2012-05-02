@@ -1452,14 +1452,8 @@ class JsonLdProcessor {
       }
 
       // if graph is not the default graph
-      if($name !== '') {
-        // add graph subject to default graph as needed
-        if(!property_exists($default_graph->subjects, $name)) {
-          $default_graph->subjects->{$name} = (object)array('@id' => $name);
-        }
-        else {
-          $default_graph->subjects->{$name};
-        }
+      if($name !== '' && !property_exists($default_graph->subjects, $name)) {
+        $default_graph->subjects->{$name} = (object)array('@id' => $name);
       }
 
       // add subject to graph as needed
