@@ -52,7 +52,7 @@ function deep_compare($expect, $result) {
       return false;
     }
     foreach($expect as $k => $v) {
-      if(!deep_compare($v, $result->{$k})) {
+      if(!property_exists($result, $k) || !deep_compare($v, $result->{$k})) {
         return false;
       }
     }
@@ -152,14 +152,7 @@ class TestRunner {
   public function check($test, $expect, $result) {
     global $eol;
 
-    if(in_array('jld:NormalizeTest', $test->{'@type'}) !== false) {
-      $pass = JsonLdProcessor::compareNormalized($expect, $result);
-    }
-    else {
-      $pass = deep_compare($expect, $result);
-    }
-
-    if($pass) {
+    if(deep_compare($expect, $result)) {
       $this->passed += 1;
       echo "PASS$eol";
     }
@@ -253,7 +246,8 @@ class TestRunner {
         if(in_array('jld:NormalizeTest', $type)) {
           $this->test($test->name);
           $input = read_test_json($test->input, $filepath);
-          $test->expect = read_test_json($test->expect, $filepath);
+          $test->expect = read_test_nquads($test->expect, $filepath);
+          $options['format'] = 'application/nquads';
           $result = jsonld_normalize($input, $options);
         }
         else if(in_array('jld:ExpandTest', $type)) {

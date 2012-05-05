@@ -90,14 +90,16 @@ function jsonld_frame($input, $frame, $options=array()) {
 }
 
 /**
- * Performs JSON-LD normalization.
+ * Performs RDF normalization on the given JSON-LD input.
  *
  * @param mixed $input the JSON-LD object to normalize.
  * @param assoc [$options] the options to use:
  *          [base] the base IRI to use.
+ *          [format] the format if output is a string:
+ *            'application/nquads' for N-Quads (default).
  *          [resolver(url, callback(err, jsonCtx))] the URL resolver to use.
  *
- * @return array the normalized JSON-LD output.
+ * @return array the normalized output.
  */
 function jsonld_normalize($input, $options=array()) {
   $p = new JsonLdProcessor();
@@ -409,7 +411,7 @@ class JsonLdProcessor {
     }
 
     // do normalization
-    return $this->_normalize($expanded);
+    return $this->_normalize($expanded, $options);
   }
 
   /**
@@ -723,68 +725,6 @@ class JsonLdProcessor {
   }
 
   /**
-   * Compares two JSON-LD normalized inputs for equality.
-   *
-   * @param array $n1 the first normalized input.
-   * @param array $n2 the second normalized input.
-   *
-   * @return bool true if the inputs are equivalent, false if not.
-   */
-  public static function compareNormalized($n1, $n2) {
-    if(!is_array($n1) || !is_array($n2)) {
-      throw new JsonLdException(
-        'Invalid JSON-LD syntax; normalized JSON-LD must be an array.',
-        'jsonld.SyntaxError');
-    }
-
-    // different # of subjects
-    if(count($n1) !== count($n2)) {
-      return false;
-    }
-
-    // assume subjects are in the same order because of normalization
-    foreach($n1 as $i => $s1) {
-      $s2 = $n2[$i];
-
-      // different @ids
-      if($s1->{'@id'} !== $s2->{'@id'}) {
-        return false;
-      }
-
-      // subjects have different properties
-      if(count(get_object_vars($s1)) !== count(get_object_vars($s2))) {
-        return false;
-      }
-
-      foreach($s1 as $p => $objects) {
-        // skip @id property
-        if($p === '@id') {
-          continue;
-        }
-
-        // s2 is missing s1 property
-        if(!self::hasProperty($s2, $p)) {
-          return false;
-        }
-
-        // subjects have different objects for the property
-        if(count($objects) !== count($s2->{$p})) {
-          return false;
-        }
-
-        foreach($objects as $o) {
-          // s2 is missing s1 object
-          if(!self::hasValue($s2, $p, $o)) {
-            return false;
-          }
-        }
-      }
-    }
-
-    return true;
-  }
-
-  /**
    * Gets the value for the given active context key and type, null if none is
    * set.
    *
@@ -960,9 +900,7 @@ class JsonLdProcessor {
         // preserve empty arrays
         if(count($value) === 0) {
           $prop = $this->_compactIri($ctx, $key);
-          if($prop !== null) {
-            self::addValue($rval, $prop, array(), true);
-          }
+          self::addValue($rval, $prop, array(), true);
         }
 
         // recusively process array values
@@ -971,11 +909,6 @@ class JsonLdProcessor {
 
           // compact property
           $prop = $this->_compactIri($ctx, $key, $v);
-
-          // skip null properties
-          if($prop === null) {
-            continue;
-          }
 
           // remove @list for recursion (will be re-added if necessary)
           if($is_list) {
@@ -1258,16 +1191,30 @@ class JsonLdProcessor {
   /**
    * Performs JSON-LD normalization.
    *
-   * @param input the expanded JSON-LD object to normalize.
+   * @param array $input the expanded JSON-LD object to normalize.
+   * @param assoc $options the normalization options.
    *
    * @return the normalized output.
    */
-  protected function _normalize($input) {
-    // get statements
-    $namer = new UniqueNamer('_:t');
+  protected function _normalize($input, $options) {
+    // map bnodes to RDF statements
+    $statements = array();
     $bnodes = new stdClass();
-    $subjects = new stdClass();
-    $this->_getStatements($input, $namer, $bnodes, $subjects);
+    $namer = new UniqueNamer('_:t');
+    $this->_toRDF($input, $namer, null, null, null, $statements);
+    foreach($statements as $statement) {
+      foreach(array('subject', 'object') as $node) {
+        $id = $statement->{$node}->nominalValue;
+        if($statement->{$node}->interfaceName === 'BlankNode') {
+          if(property_exists($bnodes, $id)) {
+            $bnodes->{$id}->statements[] = $statement;
+          }
+          else {
+            $bnodes->{$id} = (object)array('statements' => array($statement));
+          }
+        }
+      }
+    }
 
     // create canonical namer
     $namer = new UniqueNamer('_:c14n');
@@ -1283,8 +1230,7 @@ class JsonLdProcessor {
       $unique = new stdClass();
       foreach($unnamed as $bnode) {
         // hash statements for each unnamed bnode
-        $statements = $bnodes->{$bnode};
-        $hash = $this->_hashStatements($statements, $namer);
+        $hash = $this->_hashStatements($bnode, $bnodes, $namer);
 
         // store hash as unique or a duplicate
         if(property_exists($duplicates, $hash)) {
@@ -1327,8 +1273,7 @@ class JsonLdProcessor {
         // hash bnode paths
         $path_namer = new UniqueNamer('_:t');
         $path_namer->getName($bnode);
-        $results[] = $this->_hashPaths(
-          $bnodes, $bnodes->{$bnode}, $namer, $path_namer);
+        $results[] = $this->_hashPaths($bnode, $bnodes, $namer, $path_namer);
       }
 
       // name bnodes in hash order
@@ -1345,43 +1290,37 @@ class JsonLdProcessor {
       }
     }
 
-    // create JSON-LD array
-    $output = array();
+    // create normalized array
+    $normalized = array();
 
-    // add all bnodes
-    foreach($bnodes as $id => $statements) {
-      // add all property statements to bnode
-      $bnode = (object)array('@id' => $namer->getName($id));
-      foreach($statements as $statement) {
-        if($statement->s === '_:a') {
-          $z = $this->_getBlankNodeName($statement->o);
-          $o = $z ? (object)array('@id' => $namer->getName($z)) : $statement->o;
-          self::addValue($bnode, $statement->p, $o, true);
+    // update bnode names in each statement and serialize
+    foreach($statements as $statement) {
+      foreach(array('subject', 'object') as $node) {
+        if($statement->{$node}->interfaceName === 'BlankNode') {
+          $statement->{$node}->nominalValue = $namer->getName(
+            $statement->{$node}->nominalValue);
         }
       }
-      $output[] = $bnode;
+      $normalized[] = $this->_toNQuad($statement);
     }
 
-    // add all non-bnodes
-    foreach($subjects as $id => $statements) {
-      // add all statements to subject
-      $subject = (object)array('@id' => $id);
-      foreach($statements as $statement) {
-        $z = $this->_getBlankNodeName($statement->o);
-        $o = $z ? (object)array('@id' => $namer->getName($z)) : $statement->o;
-        self::addValue($subject, $statement->p, $o, true);
+    // sort normalized output
+    sort($normalized);
+
+    // handle output format
+    if(isset($options['format'])) {
+      if($options['format'] === 'application/nquads') {
+        return implode($normalized);
       }
-      $output[] = $subject;
+      else {
+        throw new JsonLdException(
+          'Unknown output format.',
+          'jsonld.UnknownFormat', array('format' => $options['format']));
+      }
     }
 
-    // sort normalized output by @id
-    usort($output, function($a, $b) {
-      $a = $a->{'@id'};
-      $b = $b->{'@id'};
-      return ($a < $b) ? -1 : (($a > $b) ? 1 : 0);
-    });
-
-    return $output;
+    // return parsed RDF statements
+    return $this->_parseNQuads(implode($normalized));
   }
 
   /**
@@ -1734,6 +1673,10 @@ class JsonLdProcessor {
     $rval = self::copy($active_ctx);
 
     // normalize local context to an array
+    if(is_object($local_ctx) && property_exists($local_ctx, '@context') &&
+      is_array($local_ctx->{'@context'})) {
+      $local_ctx = $local_ctx->{'@context'};
+    }
     $ctxs = self::arrayify($local_ctx);
 
     // process each context in order
@@ -1849,142 +1792,6 @@ class JsonLdProcessor {
   }
 
   /**
-   * Recursively gets all statements from the given expanded JSON-LD input.
-   *
-   * @param mixed $input the valid expanded JSON-LD input.
-   * @param UniqueNamer $namer the namer to use when encountering blank nodes.
-   * @param stdClass $bnodes the blank node statements map to populate.
-   * @param stdClass $subjects the subject statements map to populate.
-   * @param mixed [$name] the name (@id) assigned to the current input.
-   */
-  protected function _getStatements(
-    $input, $namer, $bnodes, $subjects, $name=null) {
-    // recurse into arrays
-    if(is_array($input)) {
-      foreach($input as $e) {
-        $this->_getStatements($e, $namer, $bnodes, $subjects);
-      }
-      return;
-    }
-
-    // Note: safe to assume input is a subject/blank node
-    $is_bnode = self::_isBlankNode($input);
-
-    // name blank node if appropriate, use passed name if given
-    if($name === null) {
-      if(property_exists($input, '@id')) {
-        $name = $input->{'@id'};
-      }
-      if($is_bnode) {
-        $name = $namer->getName($name);
-      }
-    }
-
-    // use a subject of '_:a' for blank node statements
-    $s = $is_bnode ? '_:a' : $name;
-
-    // get statements for the blank node
-    if($is_bnode) {
-      if(!property_exists($bnodes, $name)) {
-        $entries = $bnodes->{$name} = new ArrayObject();
-      }
-      else {
-        $entries = $bnodes->{$name};
-      }
-    }
-    else if(!property_exists($subjects, $name)) {
-      $entries = $subjects->{$name} = new ArrayObject();
-    }
-    else {
-      $entries = $subjects->{$name};
-    }
-
-    // add all statements in input
-    foreach($input as $p => $objects) {
-      // skip @id
-      if($p === '@id') {
-        continue;
-      }
-
-      // convert @lists into embedded blank node linked lists
-      foreach($objects as $i => $o) {
-        if(self::_isList($o)) {
-          $objects[$i] = $this->_makeLinkedList($o);
-        }
-      }
-
-      foreach($objects as $o) {
-        // convert boolean to @value
-        if(is_bool($o)) {
-          $o = (object)array(
-            '@value' => ($o ? 'true' : 'false'),
-            '@type' => self::XSD_BOOLEAN);
-        }
-        // convert double to @value
-        else if(is_double($o)) {
-          // do special JSON-LD double format, printf('%1.15e') equivalent
-          $o = preg_replace('/(e(?:\+|-))([0-9])$/', '${1}0${2}',
-            sprintf('%1.15e', $o));
-          $o = (object)array('@value' => $o, '@type' => self::XSD_DOUBLE);
-        }
-        // convert integer to @value
-        else if(is_integer($o)) {
-          $o = (object)array(
-            '@value' => strval($o), '@type' => self::XSD_INTEGER);
-        }
-
-        // object is a blank node
-        if(self::_isBlankNode($o)) {
-          // name object position blank node
-          $o_name = property_exists($o, '@id') ? $o->{'@id'} : null;
-          $o_name = $namer->getName($o_name);
-
-          // add property statement
-          $this->_addStatement($entries, (object)array(
-            's' => $s, 'p' => $p, 'o' => (object)array('@id' => $o_name)));
-
-          // add reference statement
-          if(!property_exists($bnodes, $o_name)) {
-            $o_entries = $bnodes->{$o_name} = new ArrayObject();
-          }
-          else {
-            $o_entries = $bnodes->{$o_name};
-          }
-          $this->_addStatement(
-            $o_entries, (object)array(
-              's' => $name, 'p' => $p, 'o' => (object)array('@id' => '_:a')));
-
-          // recurse into blank node
-          $this->_getStatements($o, $namer, $bnodes, $subjects, $o_name);
-        }
-        // object is a string, @value, subject reference
-        else if(is_string($o) || self::_isValue($o) ||
-          self::_isSubjectReference($o)) {
-          // add property statement
-          $this->_addStatement($entries, (object)array(
-            's' => $s, 'p' => $p, 'o' => $o));
-
-          // ensure a subject entry exists for subject reference
-          if(self::_isSubjectReference($o) &&
-            !property_exists($subjects, $o->{'@id'})) {
-            $subjects->{$o->{'@id'}} = new ArrayObject();
-          }
-        }
-        // object must be an embedded subject
-        else {
-          // add property statement
-          $this->_addStatement($entries, (object)array(
-            's' => $s, 'p' => $p, 'o' => (object)array(
-              '@id' => $o->{'@id'})));
-
-          // recurse into subject
-          $this->_getStatements($o, $namer, $bnodes, $subjects);
-        }
-      }
-    }
-  }
-
-  /**
    * Converts a @list value into an embedded linked list of blank nodes in
    * expanded form. The resulting array can be used as an RDF-replacement for
    * a property that used a @list.
@@ -2010,92 +1817,33 @@ class JsonLdProcessor {
   }
 
   /**
-   * Adds a statement to an array of statements. If the statement already exists
-   * in the array, it will not be added.
-   *
-   * @param ArrayObject $statements the statements array.
-   * @param stdClass $statement the statement to add.
-   */
-  protected function _addStatement($statements, $statement) {
-    foreach($statements as $s) {
-      if($s->s === $statement->s && $s->p === $statement->p &&
-        self::compareValues($s->o, $statement->o)) {
-        return;
-      }
-    }
-    $statements[] = $statement;
-  }
-
-  /**
    * Hashes all of the statements about a blank node.
    *
-   * @param ArrayObject $statements the statements about the bnode.
+   * @param string $id the ID of the bnode to hash statements for.
+   * @param stdClass $bnodes the mapping of bnodes to statements.
    * @param UniqueNamer $namer the canonical bnode namer.
    *
    * @return string the new hash.
    */
-  protected function _hashStatements($statements, $namer) {
-    // serialize all statements
-    $triples = array();
-    foreach($statements as $statement) {
-      // serialize triple
-      $triple = '';
-
-      // serialize subject
-      if($statement->s === '_:a') {
-        $triple .= '_:a';
-      }
-      else if(strpos($statement->s, '_:') === 0) {
-        $id = $statement->s;
-        $id = $namer->isNamed($id) ? $namer->getName($id) : '_:z';
-        $triple .= $id;
-      }
-      else {
-        $triple .= '<' . $statement->s . '>';
-      }
-
-      // serialize property
-      $p = ($statement->p === '@type') ? self::RDF_TYPE : $statement->p;
-      $triple .= ' <' . $p . '> ';
-
-      // serialize object
-      if(self::_isBlankNode($statement->o)) {
-        if($statement->o->{'@id'} === '_:a') {
-          $triple .= '_:a';
-        }
-        else {
-          $id = $statement->o->{'@id'};
-          $id = $namer->isNamed($id) ? $namer->getName($id) : '_:z';
-          $triple .= $id;
-        }
-      }
-      else if(is_string($statement->o)) {
-        $triple .= '"' . $statement->o . '"';
-      }
-      else if(self::_isSubjectReference($statement->o)) {
-        $triple .= '<' . $statement->o->{'@id'} . '>';
-      }
-      // must be a value
-      else {
-        $triple .= '"' . $statement->o->{'@value'} . '"';
-
-        if(property_exists($statement->o, '@type')) {
-          $triple .= '^^<' . $statement->o->{'@type'} . '>';
-        }
-        else if(property_exists($statement->o, '@language')) {
-          $triple .= '@' . $statement->o{'@language'};
-        }
-      }
-
-      // add triple
-      $triples[] = $triple;
+  protected function _hashStatements($id, $bnodes, $namer) {
+    // return cached hash
+    if(property_exists($bnodes->{$id}, 'hash')) {
+      return $bnodes->{$id}->hash;
     }
 
-    // sort serialized triples
-    sort($triples);
+    // serialize all of bnode's statements
+    $statements = $bnodes->{$id}->statements;
+    $nquads = array();
+    foreach($statements as $statement) {
+      $nquads[] = $this->_toNQuad($statement, $id);
+    }
 
-    // return hashed triples
-    return sha1(implode($triples));
+    // sort serialized quads
+    sort($nquads);
+
+    // cache and return hashed quads
+    $hash = $bnodes->{$id}->hash = sha1(implode($nquads));
+    return $hash;
   }
 
   /**
@@ -2104,32 +1852,33 @@ class JsonLdProcessor {
    * method will recursively pick adjacent bnode permutations that produce the
    * lexicographically-least 'path' serializations.
    *
+   * @param string $id the ID of the bnode to hash paths for.
    * @param stdClass $bnodes the map of bnode statements.
-   * @param ArrayObject $statements the statements for the bnode to produce
-   *          the hash for.
    * @param UniqueNamer $namer the canonical bnode namer.
    * @param UniqueNamer $path_namer the namer used to assign names to adjacent
    *          bnodes.
    *
    * @return stdClass the hash and path namer used.
    */
-  protected function _hashPaths($bnodes, $statements, $namer, $path_namer) {
+  protected function _hashPaths($id, $bnodes, $namer, $path_namer) {
     // create SHA-1 digest
     $md = hash_init('sha1');
 
     // group adjacent bnodes by hash, keep properties and references separate
     $groups = new stdClass();
-    $cache = new stdClass();
+    $statements = $bnodes->{$id}->statements;
     foreach($statements as $statement) {
-      if($statement->s !== '_:a' && strpos($statement->s, '_:') === 0) {
-        $bnode = $statement->s;
+      // get adjacent bnode
+      $bnode = $this->_getAdjacentBlankNodeName($statement->subject, $id);
+      if($bnode !== null) {
         $direction = 'p';
       }
       else {
-        $bnode = $this->_getBlankNodeName($statement->o);
-        $direction = 'r';
+        $bnode = $this->_getAdjacentBlankNodeName($statement->object, $id);
+        if($bnode !== null) {
+          $direction = 'r';
+        }
       }
-
       if($bnode !== null) {
         // get bnode name (try canonical, path, then hash)
         if($namer->isNamed($bnode)) {
@@ -2138,19 +1887,14 @@ class JsonLdProcessor {
         else if($path_namer->isNamed($bnode)) {
           $name = $path_namer->getName($bnode);
         }
-        else if(property_exists($cache, $bnode)) {
-          $name = $cache->{$bnode};
-        }
         else {
-          $name = $this->_hashStatements($bnodes->{$bnode}, $namer);
-          $cache->{$bnode} = $name;
+          $name = $this->_hashStatements($bnode, $bnodes, $namer);
         }
 
         // hash direction, property, and bnode name/hash
         $group_md = hash_init('sha1');
         hash_update($group_md, $direction);
-        hash_update($group_md,
-          ($statement->p === '@type') ? self::RDF_TYPE : $statement->p);
+        hash_update($group_md, $statement->property->nominalValue);
         hash_update($group_md, $name);
         $group_hash = hash_final($group_md);
 
@@ -2208,14 +1952,14 @@ class JsonLdProcessor {
         if(!$skipped) {
           foreach($recurse as $bnode) {
             $result = $this->_hashPaths(
-              $bnodes, $bnodes->{$bnode}, $namer, $path_namer_copy);
+              $bnode, $bnodes, $namer, $path_namer_copy);
             $path .= $path_namer_copy->getName($bnode);
             $path .= "<{$result->hash}>";
             $path_namer_copy = $result->pathNamer;
 
             // skip permutation if path is already >= chosen path
-            if($chosen_path !== null && strlen($path) >= strlen($chosen_path) &&
-              $path > $chosen_path) {
+            if($chosen_path !== null &&
+              strlen($path) >= strlen($chosen_path) && $path > $chosen_path) {
               $skipped = true;
               break;
             }
@@ -2239,17 +1983,21 @@ class JsonLdProcessor {
   }
 
   /**
-   * A helper function that gets the blank node name from a statement value
-   * (a subject or object). If the statement value is not a blank node or it
-   * has an @id of '_:a', then null will be returned.
+   * A helper function that gets the blank node name from an RDF statement
+   * node (subject or object). If the node is not a blank node or its
+   * nominal value does not match the given blank node ID, it will be
+   * returned.
    *
-   * @param mixed $value the statement value.
+   * @param stdClass $node the RDF statement node.
+   * @param string $id the ID of the blank node to look next to.
    *
-   * @return mixed the blank node name or null if none was found.
+   * @return mixed the adjacent blank node name or null if none was found.
    */
-  protected function _getBlankNodeName($value) {
-    return ((self::_isBlankNode($value) && $value->{'@id'} !== '_:a') ?
-      $value->{'@id'} : null);
+  protected function _getAdjacentBlankNodeName($node, $id) {
+    if($node->interfaceName === 'BlankNode' && $node->nominalValue !== $id) {
+      return $node->nominalValue;
+    }
+    return null;
   }
 
   /**
@@ -2979,11 +2727,6 @@ class JsonLdProcessor {
 
     // no matching terms
     if(count($terms) === 0) {
-      // return null if a null mapping exists
-      if(property_exists($ctx->mappings, $iri) &&
-        $ctx->mappings->{$iri}->{'@id'} === null) {
-        return null;
-      }
       // use iri
       return $iri;
     }
@@ -3061,7 +2804,8 @@ class JsonLdProcessor {
     }
 
     // clear context entry
-    if($value === null) {
+    if($value === null or (is_object($value) &&
+      property_exists($value, '@id') && $value->{'@id'} === null)) {
       if(property_exists($active_ctx->mappings, $key)) {
         // if key is a keyword alias, remove it
         $kw = $active_ctx->mappings->{$key}->{'@id'};
@@ -3069,8 +2813,8 @@ class JsonLdProcessor {
           array_splice($active_ctx->keywords->{$kw},
             in_array($key, $active_ctx->keywords->{$kw}), 1);
         }
+        unset($active_ctx->mappings->{$key});
       }
-      $active_ctx->mappings->{$key} = (object)array('@id' => null);
       $defined->{$key} = true;
       return;
     }
@@ -3091,7 +2835,7 @@ class JsonLdProcessor {
             array($this, '_compareShortestLeast'));
         }
       }
-      else if($value !== null) {
+      else {
         // expand value to a full IRI
         $value = $this->_expandContextIri(
           $active_ctx, $ctx, $value, $base, $defined);
@@ -3195,10 +2939,8 @@ class JsonLdProcessor {
       $mapping->{'@language'} = $language;
     }
 
-    // if not a null mapping, merge onto parent mapping if one exists for
-    // a prefix
-    if($mapping->{'@id'} !== null && $prefix !== null &&
-      property_exists($active_ctx->mappings, $prefix)) {
+    // merge onto parent mapping if one exists for a prefix
+    if($prefix !== null && property_exists($active_ctx->mappings, $prefix)) {
       $child = $mapping;
       $mapping = self::copy($active_ctx->mappings->{$prefix});
       foreach($child as $k => $v) {
@@ -3234,8 +2976,8 @@ class JsonLdProcessor {
     // recurse if value is a term
     if(property_exists($active_ctx->mappings, $value)) {
       $id = $active_ctx->mappings->{$value}->{'@id'};
-      // value is already an absolute IRI or id is a null mapping
-      if($value === $id || $id === null) {
+      // value is already an absolute IRI
+      if($value === $id) {
         return $value;
       }
       return $this->_expandContextIri($active_ctx, $ctx, $id, $base, $defined);
@@ -3265,10 +3007,8 @@ class JsonLdProcessor {
       // recurse if prefix is defined
       if(property_exists($active_ctx->mappings, $prefix)) {
         $id = $active_ctx->mappings->{$prefix}->{'@id'};
-        if($id !== null) {
-          return $this->_expandContextIri(
-            $active_ctx, $ctx, $id, $base, $defined) . $suffix;
-        }
+        return $this->_expandContextIri(
+          $active_ctx, $ctx, $id, $base, $defined) . $suffix;
       }
 
       // consider value an absolute IRI
@@ -3815,10 +3555,12 @@ class JsonLdProcessor {
    * Converts an RDF statement to an N-Quad string (a single quad).
    *
    * @param stdClass $statement the RDF statement to convert.
+   * @param string $bnode the bnode the staetment is mapped to (optional, for
+   *           use during normalization only).
    *
    * @return the N-Quad string.
    */
-  protected static function _toNQuad($statement) {
+  protected static function _toNQuad($statement, $bnode=null) {
     $s = $statement->subject;
     $p = $statement->property;
     $o = $statement->object;
@@ -3830,6 +3572,11 @@ class JsonLdProcessor {
     if($s->interfaceName === 'IRI') {
       $quad .= "<{$s->nominalValue}>";
     }
+    // normalization mode
+    else if($bnode !== null) {
+      $quad .= ($s->nominalValue === $bnode) ? '_:a' : '_:z';
+    }
+    // normal mode
     else {
       $quad .= $s->nominalValue;
     }
@@ -3842,7 +3589,14 @@ class JsonLdProcessor {
       $quad .= "<{$o->nominalValue}>";
     }
     else if($o->interfaceName === 'BlankNode') {
-      $quad .= $o->nominalValue;
+      // normalization mode
+      if($bnode !== null) {
+        $quad .= ($o->nominalValue === $bnode) ? '_:a' : '_:z';
+      }
+      // normal mode
+      else {
+        $quad .= $o->nominalValue;
+      }
     }
     else {
       $quad .= '"' . $o->nominalValue . '"';
