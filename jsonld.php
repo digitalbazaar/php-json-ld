@@ -45,7 +45,7 @@
  *          [strict] use strict mode (default: true).
  *          [optimize] true to optimize the compaction (default: false).
  *          [graph] true to always output a top-level graph (default: false).
- *          [resolver(url, callback(err, jsonCtx))] the URL resolver to use.
+ *          [resolver(url)] the URL resolver to use.
  *
  * @return mixed the compacted JSON-LD output.
  */
@@ -60,7 +60,7 @@ function jsonld_compact($input, $ctx, $options=array()) {
  * @param mixed $input the JSON-LD object to expand.
  * @param assoc[$options] the options to use:
  *          [base] the base IRI to use.
- *          [resolver(url, callback(err, jsonCtx))] the URL resolver to use.
+ *          [resolver(url)] the URL resolver to use.
  *
  * @return array the expanded JSON-LD output.
  */
@@ -80,7 +80,7 @@ function jsonld_expand($input, $options=array()) {
  *          [explicit] default @explicit flag (default: false).
  *          [omitDefault] default @omitDefault flag (default: false).
  *          [optimize] optimize when compacting (default: false).
- *          [resolver(url, callback(err, jsonCtx))] the URL resolver to use.
+ *          [resolver(url)] the URL resolver to use.
  *
  * @return stdClass the framed JSON-LD output.
  */
@@ -97,7 +97,7 @@ function jsonld_frame($input, $frame, $options=array()) {
  *          [base] the base IRI to use.
  *          [format] the format if output is a string:
  *            'application/nquads' for N-Quads (default).
- *          [resolver(url, callback(err, jsonCtx))] the URL resolver to use.
+ *          [resolver(url)] the URL resolver to use.
  *
  * @return array the normalized output.
  */
@@ -132,13 +132,54 @@ function jsonld_from_rdf($input, $options=array()) {
  *          [base] the base IRI to use.
  *          [format] the format to use to output a string:
  *            'application/nquads' for N-Quads (default).
- *          [resolver(url, callback(err, jsonCtx))] the URL resolver to use.
+ *          [resolver(url)] the URL resolver to use.
  *
  * @return array all RDF statements in the JSON-LD object.
  */
 function jsonld_to_rdf($input, $options=array()) {
   $p = new JsonLdProcessor();
   return $p->toRDF($input, $options);
+}
+
+/** The default JSON-LD URL resolver. */
+$jsonld_default_url_resolver = null;
+
+/**
+ * Sets the default JSON-LD URL resolver.
+ *
+ * @param callable resolver(url) the URL resolver to use.
+ */
+function jsonld_set_url_resolver($resolver) {
+  global $jsonld_default_url_resolver;
+  $jsonld_default_url_resolver = $resolver;
+}
+
+/**
+ * Retrieves JSON-LD at the given URL.
+ *
+ * @param string $url the URL to to resolve.
+ *
+ * @return the JSON-LD.
+ */
+function jsonld_resolve_url($url) {
+  global $jsonld_default_url_resolver;
+  if($jsonld_default_url_resolver !== null) {
+    return call_user_func($jsonld_default_url_resolver, $url);
+  }
+
+  // default JSON-LD GET implementation
+  $opts = array('http' =>
+    array(
+      'method' => "GET",
+      'header' =>
+      "Accept: application/ld+json\r\n" .
+      "User-Agent: PaySwarm PHP Client/1.0\r\n"));
+  $stream = stream_context_create($opts);
+  $result = @file_get_contents($url, false, $stream);
+  if($result === false) {
+    throw new Exception("Could not GET url: '$url'");
+  }
+  return $result;
 }
 
 /**
@@ -155,6 +196,9 @@ class JsonLdProcessor {
   const RDF_REST = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#rest';
   const RDF_NIL = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#nil';
   const RDF_TYPE = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type';
+
+  /** Restraints */
+  const MAX_CONTEXT_URLS = 10;
 
   /**
    * Constructs a JSON-LD processor.
@@ -183,7 +227,6 @@ class JsonLdProcessor {
     isset($options['optimize']) or $options['optimize'] = false;
     isset($options['graph']) or $options['graph'] = false;
     isset($options['activeCtx']) or $options['activeCtx'] = false;
-    // FIXME: implement jsonld_resolve_url
     isset($options['resolver']) or $options['resolver'] = 'jsonld_resolve_url';
 
     // expand input
@@ -283,19 +326,25 @@ class JsonLdProcessor {
    * @param mixed $input the JSON-LD object to expand.
    * @param assoc $options the options to use:
    *          [base] the base IRI to use.
-   *          [resolver(url, callback(err, jsonCtx))] the URL resolver to use.
+   *          [resolver(url)] the URL resolver to use.
    *
    * @return array the expanded JSON-LD output.
    */
   public function expand($input, $options) {
     // set default options
     isset($options['base']) or $options['base'] = '';
-    // FIXME: implement jsonld_resolve_url
     isset($options['resolver']) or $options['resolver'] = 'jsonld_resolve_url';
 
     // resolve all @context URLs in the input
     $input = self::copy($input);
-    $this->_resolveUrls($input, $options['resolver']);
+    try {
+      $this->_resolveContextUrls($input, new stdClass(), $options['resolver']);
+    }
+    catch(Exception $e) {
+      throw new JsonLdException(
+        'Could not perform JSON-LD expansion.',
+        'jsonld.ExpandError', null, $e);
+    }
 
     // do expansion
     $ctx = $this->_getInitialContext();
@@ -321,7 +370,7 @@ class JsonLdProcessor {
    *          [explicit] default @explicit flag (default: false).
    *          [omitDefault] default @omitDefault flag (default: false).
    *          [optimize] optimize when compacting (default: false).
-   *          [resolver(url, callback(err, jsonCtx))] the URL resolver to use.
+   *          [resolver(url)] the URL resolver to use.
    *
    * @return stdClass the framed JSON-LD output.
    */
@@ -332,7 +381,6 @@ class JsonLdProcessor {
     isset($options['explicit']) or $options['explicit'] = false;
     isset($options['omitDefault']) or $options['omitDefault'] = false;
     isset($options['optimize']) or $options['optimize'] = false;
-    // FIXME: implement jsonld_resolve_url
     isset($options['resolver']) or $options['resolver'] = 'jsonld_resolve_url';
 
     // preserve frame context
@@ -343,20 +391,20 @@ class JsonLdProcessor {
       // expand input
       $_input = $this->expand($input, $options);
     }
-    catch(JsonLdException $e) {
+    catch(Exception $e) {
       throw new JsonLdException(
         'Could not expand input before framing.',
-        'jsonld.FrameError', $e);
+        'jsonld.FrameError', null, $e);
     }
 
     try {
       // expand frame
       $_frame = $this->expand($frame, $options);
     }
-    catch(JsonLdException $e) {
+    catch(Exception $e) {
       throw new JsonLdException(
         'Could not expand frame before framing.',
-        'jsonld.FrameError', $e);
+        'jsonld.FrameError', null, $e);
     }
 
     // do framing
@@ -368,10 +416,10 @@ class JsonLdProcessor {
       $options['activeCtx'] = true;
       $result = $this->compact($framed, $ctx, $options);
     }
-    catch(JsonLdException $e) {
+    catch(Exception $e) {
       throw new JsonLdException(
         'Could not compact framed output.',
-        'jsonld.FrameError', $e);
+        'jsonld.FrameError', null, $e);
     }
 
     $compacted = $result['compacted'];
@@ -390,24 +438,23 @@ class JsonLdProcessor {
    * @param mixed $input the JSON-LD object to normalize.
    * @param assoc $options the options to use:
    *          [base] the base IRI to use.
-   *          [resolver(url, callback(err, jsonCtx))] the URL resolver to use.
+   *          [resolver(url)] the URL resolver to use.
    *
    * @return array the JSON-LD normalized output.
    */
   public function normalize($input, $options) {
     // set default options
     isset($options['base']) or $options['base'] = '';
-    // FIXME: implement jsonld_resolve_url
     isset($options['resolver']) or $options['resolver'] = 'jsonld_resolve_url';
 
     try {
       // expand input then do normalization
       $expanded = $this->expand($input, $options);
     }
-    catch(JsonLdException $e) {
+    catch(Exception $e) {
       throw new JsonLdException(
         'Could not expand input before normalization.',
-        'jsonld.NormalizeError', $e);
+        'jsonld.NormalizeError', null, $e);
     }
 
     // do normalization
@@ -456,14 +503,13 @@ class JsonLdProcessor {
    *          [base] the base IRI to use.
    *          [format] the format to use to output a string:
    *            'application/nquads' for N-Quads (default).
-   *          [resolver(url, callback(err, jsonCtx))] the URL resolver to use.
+   *          [resolver(url)] the URL resolver to use.
    *
    * @return array all RDF statements in the JSON-LD object.
    */
   public function toRDF($input, $options) {
     // set default options
     isset($options['base']) or $options['base'] = '';
-    // FIXME: implement jsonld_resolve_url
     isset($options['resolver']) or $options['resolver'] = 'jsonld_resolve_url';
 
     try {
@@ -510,7 +556,7 @@ class JsonLdProcessor {
    * @param stdClass $active_ctx the current active context.
    * @param mixed $local_ctx the local context to process.
    * @param assoc $options the options to use:
-   *          [resolver(url, callback(err, jsonCtx))] the URL resolver to use.
+   *          [resolver(url)] the URL resolver to use.
    *
    * @return stdClass the new active context.
    */
@@ -522,15 +568,21 @@ class JsonLdProcessor {
 
     // set default options
     isset($options['base']) or $options['base'] = '';
-    // FIXME: implement jsonld_resolve_url
     isset($options['resolver']) or $options['resolver'] = 'jsonld_resolve_url';
 
     // resolve URLs in local_ctx
-    $local_ctx = self::copy($local_ctx);
-    if(is_object($local_ctx) && !property_exists($local_ctx, '@context')) {
-      $local_ctx = (object)array('@context' => $local_ctx);
+    $ctx = self::copy($local_ctx);
+    if(is_object($ctx) && !property_exists($ctx, '@context')) {
+      $ctx = (object)array('@context' => $ctx);
     }
-    $ctx = $this->_resolveUrls($local_ctx, $options['resolver']);
+    try {
+      $this->_resolveContextUrls($ctx, new stdClass(), $options['resolver']);
+    }
+    catch(Exception $e) {
+      throw new JsonLdException(
+        'Could not process JSON-LD context.',
+        'jsonld.ContextError', null, $e);
+    }
 
     // process context
     return $this->_processContext($active_ctx, $ctx, $options);
@@ -3085,75 +3137,115 @@ class JsonLdProcessor {
   }
 
   /**
-   * Resolves external @context URLs using the given URL resolver. Each instance
-   * of @context in the input that refers to a URL will be replaced with the
-   * JSON @context found at that URL.
+   * Finds all @context URLs in the given JSON-LD input.
    *
-   * @param mixed $input the JSON-LD object with possible contexts.
-   * @param callable $resolver(url, callback(err, jsonCtx)) the URL resolver.
-   *
-   * @return mixed the result.
+   * @param mixed $input the JSON-LD input.
+   * @param stdClass $urls a map of URLs (url => false/@contexts).
+   * @param bool $replace true to replace the URLs in the given input with
+   *           the @contexts from the urls map, false not to.
    */
-  protected function _resolveUrls($input, $resolver) {
-    // keeps track of resolved URLs (prevents duplicate work)
-    $urls = new stdClass();
-
-    // finds URLs in @context properties and replaces them with their
-    // resolved @contexts if replace is true
-    $findUrls = function($input, $replace) use (&$findUrls, $urls) {
-      if(is_array($input)) {
-        $output = array();
-        foreach($input as $v) {
-          $output[] = $findUrls($v, $replace);
-        }
-        return $output;
+  protected function _findContextUrls($input, $urls, $replace) {
+    $count = count((array)$urls);
+    if(is_array($input)) {
+      foreach($input as $e) {
+        $this->_findContextUrls($e, $urls, $replace);
       }
-      else if(is_object($input)) {
-        foreach($input as $k => $v) {
-          if($k !== '@context') {
-            $input->{$k} = $findUrls($v, $replace);
-            continue;
-          }
+    }
+    else if(is_object($input)) {
+      foreach($input as $k => &$v) {
+        if($k !== '@context') {
+          $this->_findContextUrls($v, $urls, $replace);
+          continue;
+        }
 
-          // array @context
-          if(is_array($v)) {
-            foreach($v as $i => $url) {
-              if(is_string($url)) {
-                // replace w/resolved @context if requested
-                if($replace) {
-                  $v[$i] = $urls->{$url};
+        // array @context
+        if(is_array($v)) {
+          $length = count($v);
+          for($i = 0; $i < $length; ++$i) {
+            if(is_string($v[$i])) {
+              $url = $v[$i];
+              // replace w/@context if requested
+              if($replace) {
+                $ctx = $urls->{$url};
+                if(is_array($ctx)) {
+                  // add flattened context
+                  array_splice($v, $i, 1, $ctx);
+                  $i += count($ctx);
+                  $length += count($ctx);
                 }
-                // unresolved @context found
-                else if(!property_exists($urls, $url)) {
-                  $urls->{$url} = new stdClass();
+                else {
+                  $v[$i] = $ctx;
                 }
+              }
+              // @context URL found
+              else if(!property_exists($urls, $url)) {
+                $urls->{$url} = false;
               }
             }
           }
-          // string @context
-          else if(is_string($v)) {
-            // replace w/resolved @context if requested
-            if($replace) {
-              $input->{$key} = $urls->{$v};
-            }
-            // unresolved @context found
-            else if(!property_exists($urls, $v)) {
-              $urls->{$v} = new stdClass();
-            }
+        }
+        // string @context
+        else if(is_string($v)) {
+          // replace w/@context if requested
+          if($replace) {
+            $input->{$k} = $urls->{$v};
+          }
+          // @context URL found
+          else if(!property_exists($urls, $v)) {
+            $urls->{$v} = false;
           }
         }
       }
-      return $input;
-    };
-    $input = $findUrls($input, false);
+    }
+  }
 
-    // resolve all URLs
-    foreach($urls as $url => $v) {
-      // validate URL
-      if(filter_var($url, FILTER_VALIDATE_URL) === false) {
-        throw new JsonLdException(
-          'Malformed URL.', 'jsonld.InvalidUrl', array('url' => $url));
+  /**
+   * Resolves external @context URLs using the given URL resolver. Each
+   * instance of @context in the input that refers to a URL will be replaced
+   * with the JSON @context found at that URL.
+   *
+   * @param mixed $input the JSON-LD input with possible contexts.
+   * @param stdClass $cycles an object for tracking context cycles.
+   * @param callable $resolver(url) the URL resolver.
+   *
+   * @return mixed the result.
+   */
+  protected function _resolveContextUrls(&$input, $cycles, $resolver) {
+    if(count((array)$cycles) > self::MAX_CONTEXT_URLS) {
+      throw new JsonLdException(
+        'Maximum number of @context URLs exceeded.',
+        'jsonld.ContextUrlError', array('max' => self::MAX_CONTEXT_URLS));
+    }
+
+    // for tracking the URLs to resolve
+    $urls = new stdClass();
+
+    // find all URLs in the given input
+    $this->_findContextUrls($input, $urls, false);
+
+    // queue all unresolved URLs
+    $queue = array();
+    foreach($urls as $url => $ctx) {
+      if($ctx === false) {
+        // validate URL
+        if(filter_var($url, FILTER_VALIDATE_URL) === false) {
+          throw new JsonLdException(
+              'Malformed URL.', 'jsonld.InvalidUrl', array('url' => $url));
+        }
+        $queue[] = $url;
       }
+    }
+
+    // resolve URLs in queue
+    foreach($queue as $url) {
+      // check for context URL cycle
+      if(property_exists($cycles, $url)) {
+        throw new JsonLdException(
+          'Cyclical @context URLs detected.',
+          'jsonld.ContextUrlError', array('url' => $url));
+      }
+      $_cycles = self::copy($cycles);
+      $_cycles->{$url} = true;
 
       // resolve URL
       $ctx = $resolver($url);
@@ -3162,27 +3254,27 @@ class JsonLdProcessor {
       if(is_string($ctx)) {
         $ctx = json_decode($ctx);
         switch(json_last_error()) {
-        case JSON_ERROR_NONE:
-          break;
-        case JSON_ERROR_DEPTH:
-          throw new JsonLdException(
+          case JSON_ERROR_NONE:
+            break;
+          case JSON_ERROR_DEPTH:
+            throw new JsonLdException(
             'Could not parse JSON from URL; the maximum stack depth has ' .
             'been exceeded.', 'jsonld.ParseError', array('url' => $url));
-        case JSON_ERROR_STATE_MISMATCH:
-          throw new JsonLdException(
+          case JSON_ERROR_STATE_MISMATCH:
+            throw new JsonLdException(
             'Could not parse JSON from URL; invalid or malformed JSON.',
             'jsonld.ParseError', array('url' => $url));
-        case JSON_ERROR_CTRL_CHAR:
-        case JSON_ERROR_SYNTAX:
-          throw new JsonLdException(
+          case JSON_ERROR_CTRL_CHAR:
+          case JSON_ERROR_SYNTAX:
+            throw new JsonLdException(
             'Could not parse JSON from URL; syntax error, malformed JSON.',
             'jsonld.ParseError', array('url' => $url));
-        case JSON_ERROR_UTF8:
-          throw new JsonLdException(
+          case JSON_ERROR_UTF8:
+            throw new JsonLdException(
             'Could not parse JSON from URL; malformed UTF-8 characters.',
-             'jsonld.ParseError', array('url' => $url));
-        default:
-          throw new JsonLdException(
+            'jsonld.ParseError', array('url' => $url));
+          default:
+            throw new JsonLdException(
             'Could not parse JSON from URL; unknown error.',
             'jsonld.ParseError', array('url' => $url));
         }
@@ -3195,15 +3287,18 @@ class JsonLdProcessor {
           'jsonld.InvalidUrl', array('url' => $url));
       }
 
-      // FIXME: needs to recurse to resolve URLs in the result, and
-      // detect cycles, and limit recursion
-      if(property_exists($ctx, '@context')) {
-        $urls->{$url} = $ctx->{'@context'};
+      // use empty context if no @context key is present
+      if(!property_exists($ctx, '@context')) {
+        $ctx = (object)array('@context' => new stdClass());
       }
+
+      // recurse
+      $this->_resolveContextUrls($ctx, $_cycles, $resolver);
+      $urls->{$url} = $ctx->{'@context'};
     }
 
-    // do url replacement
-    return $findUrls($input, true);
+    // replace all URLS in the input
+    $this->_findContextUrls($input, $urls, true);
   }
 
   /**
@@ -3634,10 +3729,10 @@ class JsonLdException extends Exception {
   public function __toString() {
     $rval = __CLASS__ . ": [{$this->type}]: {$this->message}\n";
     if($this->details) {
-      $rval .= 'details: ' . print_r($this->details, true) . "\n";
+      $rval .= 'Details: ' . print_r($this->details, true) . "\n";
     }
     if($this->cause) {
-      $rval .= 'cause: ' . $this->cause;
+      $rval .= 'Cause: ' . $this->cause;
     }
     $rval .= $this->getTraceAsString() . "\n";
     return $rval;
