@@ -882,6 +882,12 @@ class JsonLdProcessor {
     if(is_object($element)) {
       // element is a @value
       if(self::_isValue($element)) {
+        // if @value is the only key, return its value
+        if(count(get_object_vars($element)) === 1) {
+          return $element->{'@value'};
+        }
+
+        // get type and language context rules
         $type = self::getContextValue($ctx, $property, '@type');
         $language = self::getContextValue($ctx, $property, '@language');
 
@@ -889,17 +895,6 @@ class JsonLdProcessor {
         if($type !== null &&
           property_exists($element, '@type') && $element->{'@type'} === $type) {
           $element = $element->{'@value'};
-
-          // use native datatypes for certain xsd types
-          if($type === self::XSD_BOOLEAN) {
-            $element = !($element === 'false' || $element === '0');
-          }
-          else if($type === self::XSD_INTEGER) {
-            $element = intval($element);
-          }
-          else if($type === self::XSD_DOUBLE) {
-            $element = doubleval($element);
-          }
         }
         // matching @language specified in context, compact element
         else if($language !== null &&
@@ -1106,9 +1101,9 @@ class JsonLdProcessor {
           'jsonld.SyntaxError', array('value' => $value));
       }
 
-      // recurse into @list, @set, or @graph, keeping the active property
+      // recurse into @list or @set keeping the active property
       $is_list = ($prop === '@list');
-      if($is_list || $prop === '@set' || $prop === '@graph') {
+      if($is_list || $prop === '@set') {
         $value = $this->_expand($ctx, $property, $value, $options, $is_list);
         if($is_list && self::_isList($value)) {
           throw new JsonLdException(
@@ -1178,10 +1173,6 @@ class JsonLdProcessor {
           'Invalid JSON-LD syntax; the "@type" value of an element ' +
           'containing "@value" must be a string.',
           'jsonld.SyntaxError', array('element' => $rval));
-      }
-      // return only the value of @value if there is no @type or @language
-      else if($count === 1) {
-        $rval = $rval->{'@value'};
       }
       // drop null @values
       else if($rval->{'@value'} === null) {
@@ -1551,13 +1542,34 @@ class JsonLdProcessor {
     if(is_object($element)) {
       // convert @value to object
       if(self::_isValue($element)) {
+        $value = $element->{'@value'};
+        $datatype = (property_exists($element, '@type') ?
+          $element->{'@type'} : null);
+        if(is_bool($value) || is_double($value) || is_integer($value)) {
+          // convert to XSD datatype
+          if(is_bool($value)) {
+            $value = ($value ? 'true' : 'false');
+            $datatype or $datatype = self::XSD_BOOLEAN;
+          }
+          else if(is_double($value)) {
+            // do special JSON-LD double format, printf('%1.15e') equivalent
+            $value = preg_replace('/(e(?:\+|-))([0-9])$/', '${1}0${2}',
+              sprintf('%1.15e', $value));
+            $datatype or $datatype = self::XSD_DOUBLE;
+          }
+          else {
+            $value = strval($value);
+            $datatype or $datatype = self::XSD_INTEGER;
+          }
+        }
+
         $object = (object)array(
-          'nominalValue' => $element->{'@value'},
+          'nominalValue' => $value,
           'interfaceName' => 'LiteralNode');
 
-        if(property_exists($element, '@type')) {
+        if($datatype !== null) {
           $object->datatype = (object)array(
-            'nominalValue' => $element->{'@type'},
+            'nominalValue' => $datatype,
             'interfaceName' => 'IRI');
         }
         else if(property_exists($element, '@language')) {
@@ -1656,53 +1668,15 @@ class JsonLdProcessor {
       return;
     }
 
+    // element must be an rdf:type IRI (@values covered above)
     if(is_string($element)) {
-      // property can be null for string subject references in @graph
-      if($property === null) {
-        return;
-      }
-      // emit IRI for rdf:type, else plain literal
+      // emit IRI
       $statement = (object)array(
         'subject' => self::copy($subject),
         'property' => self::copy($property),
         'object' => (object)array(
           'nominalValue' => $element,
-          'interfaceName' => (($property->nominalValue === self::RDF_TYPE) ?
-            'IRI' : 'LiteralNode')));
-      if($graph !== null) {
-        $statement->name = $graph;
-      }
-      $statements[] = $statement;
-      return;
-    }
-
-    if(is_bool($element) || is_double($element) || is_integer($element)) {
-      // convert to XSD datatype
-      if(is_bool($element)) {
-        $datatype = self::XSD_BOOLEAN;
-        $value = ($element ? 'true' : 'false');
-      }
-      else if(is_double($element)) {
-        $datatype = self::XSD_DOUBLE;
-        // do special JSON-LD double format, printf('%1.15e') equivalent
-        $value = preg_replace('/(e(?:\+|-))([0-9])$/', '${1}0${2}',
-          sprintf('%1.15e', $element));
-      }
-      else {
-        $datatype = self::XSD_INTEGER;
-        $value = strval($element);
-      }
-
-      // emit typed literal
-      $statement = (object)array(
-        'subject' => self::copy($subject),
-        'property' => self::copy($property),
-        'object' => (object)array(
-          'nominalValue' => $value,
-          'interfaceName' => 'LiteralNode',
-          'datatype' => (object)array(
-            'nominalValue' => $datatype,
-            'interfaceName' => 'IRI')));
+          'interfaceName' => 'IRI'));
       if($graph !== null) {
         $statement->name = $graph;
       }
@@ -1774,6 +1748,11 @@ class JsonLdProcessor {
    * @return mixed the expanded value.
    */
   protected function _expandValue($ctx, $property, $value, $base) {
+    // nothing to expand
+    if($value === null) {
+      return null;
+    }
+
     // default to simple string return value
     $rval = $value;
 
@@ -1793,16 +1772,19 @@ class JsonLdProcessor {
       if($type === '@id' || $prop === '@graph') {
         $rval = (object)array('@id' => $this->_expandTerm($ctx, $value, $base));
       }
-      // other type
-      else if($type !== null) {
-        $rval = (object)array('@value' => strval($value), '@type' => $type);
-      }
-      // check for language tagging
-      else {
-        $language = self::getContextValue($ctx, $property, '@language');
-        if($language !== null) {
-          $rval = (object)array(
-            '@value' => strval($value), '@language' => $language);
+      else if(!self::_isKeyword($prop)) {
+        $rval = (object)array('@value' => $value);
+
+        // other type
+        if($type !== null) {
+          $rval->{'@type'} = $type;
+        }
+        // check for language tagging
+        else {
+          $language = self::getContextValue($ctx, $property, '@language');
+          if($language !== null) {
+            $rval->{'@language'} = $language;
+          }
         }
       }
     }
@@ -1833,6 +1815,18 @@ class JsonLdProcessor {
 
     // add datatype
     if(property_exists($o, 'datatype')) {
+      /*
+      // use native datatypes for certain xsd types
+      $type = $o->datatype->nominalValue;
+      if($type === self::XSD_BOOLEAN) {
+        $element = !($element === 'false' || $element === '0');
+      }
+      else if($type === self::XSD_INTEGER) {
+        $element = intval($element);
+      }
+      else if($type === self::XSD_DOUBLE) {
+        $element = doubleval($element);
+      }*/
       $rval->{'@type'} = $o->datatype->nominalValue;
     }
     // add language
@@ -2619,43 +2613,32 @@ class JsonLdProcessor {
       return $sum;
     }
 
-    // rank boolean or number
-    if(is_bool($value) || is_double($value) || is_integer($value)) {
-      if(is_bool($value)) {
-        $type = self::XSD_BOOLEAN;
-      }
-      else if(is_double($value)) {
-        $type = self::XSD_DOUBLE;
-      }
-      else {
-        $type = self::XSD_INTEGER;
-      }
-      if($has_type && $entry->{'@type'} === $type) {
-        return 3;
-      }
-      return (!$has_type && !$has_language) ? 2 : 1;
-    }
-
-    // rank string (this means the value has no @language)
-    if(is_string($value)) {
-      // entry @language is specifically null or no @type, @language, or default
-      if(($has_language && $entry->{'@language'} === null) ||
-        (!$has_type && !$has_language && !$has_default_language)) {
-        return 3;
-      }
-      return 0;
-    }
-
     // Note: Value must be an object that is a @value or subject/reference.
 
-    // @value must have either @type or @language
     if(self::_isValue($value)) {
+      // value has a @type
       if(property_exists($value, '@type')) {
         // @types match
         if($has_type && $value->{'@type'} === $entry->{'@type'}) {
           return 3;
         }
         return (!$has_type && !$has_language) ? 1 : 0;
+      }
+
+      // rank non-string value
+      if(!is_string($value->{'@value'})) {
+        return (!$has_type && !$has_language) ? 2 : 1;
+      }
+
+      // value has no @type or @language
+      if(!property_exists($value, '@language')) {
+        // entry @language is specifically null or no @type, @language, or
+        // default
+        if(($has_language && $entry->{'@language'} === null) ||
+          (!$has_type && !$has_language && !$has_default_language)) {
+          return 3;
+        }
+        return 0;
       }
 
       // @languages match or entry has no @type or @language but default
@@ -3145,7 +3128,7 @@ class JsonLdProcessor {
    *           the @contexts from the urls map, false not to.
    */
   protected function _findContextUrls($input, $urls, $replace) {
-    $count = count((array)$urls);
+    $count = count(get_object_vars($urls));
     if(is_array($input)) {
       foreach($input as $e) {
         $this->_findContextUrls($e, $urls, $replace);
@@ -3211,7 +3194,7 @@ class JsonLdProcessor {
    * @return mixed the result.
    */
   protected function _resolveContextUrls(&$input, $cycles, $resolver) {
-    if(count((array)$cycles) > self::MAX_CONTEXT_URLS) {
+    if(count(get_object_vars($cycles)) > self::MAX_CONTEXT_URLS) {
       throw new JsonLdException(
         'Maximum number of @context URLs exceeded.',
         'jsonld.ContextUrlError', array('max' => self::MAX_CONTEXT_URLS));
