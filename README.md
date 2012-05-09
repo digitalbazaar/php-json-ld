@@ -48,8 +48,8 @@ http://github.com/digitalbazaar/php-json-ld
 This library includes a sample testing utility which may be used to verify
 that changes to the processor maintain the correct output.
 
-To run the sample tests you will need to get the test suite files from the
-[json-ld.org repository][json-ld.org] hosted on GitHub.
+To run the sample tests you will need to get the test suite files by cloning
+the [json-ld.org repository][json-ld.org] hosted on GitHub.
 
 https://github.com/json-ld/json-ld.org
 
@@ -58,6 +58,7 @@ containing the tests.
 
     php jsonld-tests.php -d {PATH_TO_JSON_LD_ORG/test-suite/tests}
 
+[PHP]: http://php.net
 [JSON-LD]: http://json-ld.org/
 [json-ld.org]: https://github.com/json-ld/json-ld.org
 
