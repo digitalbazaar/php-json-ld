@@ -182,7 +182,7 @@ function jsonld_resolve_url($url) {
   return $result;
 }
 
-/** Registered RDF Statement parsers hashed by content-type. */
+/** Registered global RDF Statement parsers hashed by content-type. */
 $jsonld_rdf_parsers = new stdClass();
 
 /**
@@ -206,7 +206,9 @@ function jsonld_register_rdf_parser($content_type, $parser) {
  */
 function jsonld_unregister_rdf_parser($content_type) {
   global $jsonld_rdf_parsers;
-  unset($jsonld_rdf_parsers->{$content_type});
+  if(property_exists($jsonld_rdf_parsers, $content_type)) {
+    unset($jsonld_rdf_parsers->{$content_type});
+  }
 }
 
 /**
