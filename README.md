@@ -9,7 +9,8 @@ more information, creating a "Web of Knowledge". JSON-LD is intended to
 be a simple publishing method for expressing not only Linked Data in
 JSON, but for adding semantics to existing JSON.
 
-This library is an implementation of the JSON-LD specification in PHP.
+This library is an implementation of the [JSON-LD] specification
+in [PHP].
 
 JSON-LD is designed as a light-weight syntax that can be used to express
 Linked Data. It is primarily intended to be a way to express Linked Data
@@ -39,15 +40,24 @@ Digital Bazaar: support@digitalbazaar.com
 Source
 ------
 
-The source code for the PHP implementation of the JSON-LD processor
+The source code for the PHP implementation of the JSON-LD API
 is available at:
 
 http://github.com/digitalbazaar/php-json-ld
 
-To run the tests, checkout:
+This library includes a sample testing utility which may be used to verify
+that changes to the processor maintain the correct output.
+
+To run the sample tests you will need to get the test suite files from the
+[json-ld.org repository][json-ld.org] hosted on GitHub.
 
 https://github.com/json-ld/json-ld.org
 
-Then run:
+Then run the jsonld-tests.php application and point it at the directory
+containing the tests.
 
-php jsonld-tests.php -d <path to json-ld.org/test-suite/tests>
+    php jsonld-tests.php -d {PATH_TO_JSON_LD_ORG/test-suite/tests}
+
+[JSON-LD]: http://json-ld.org/
+[json-ld.org]: https://github.com/json-ld/json-ld.org
+
