@@ -3199,7 +3199,6 @@ class JsonLdProcessor {
    *           the @contexts from the urls map, false not to.
    */
   protected function _findContextUrls($input, $urls, $replace) {
-    $count = count(get_object_vars($urls));
     if(is_array($input)) {
       foreach($input as $e) {
         $this->_findContextUrls($e, $urls, $replace);
