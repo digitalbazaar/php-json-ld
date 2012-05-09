@@ -182,6 +182,33 @@ function jsonld_resolve_url($url) {
   return $result;
 }
 
+/** Registered RDF Statement parsers hashed by content-type. */
+$jsonld_rdf_parsers = new stdClass();
+
+/**
+ * Registers a global RDF Statement parser by content-type, for use with
+ * jsonld_from_rdf. Global parsers will be used by JsonLdProcessors that do
+ * not register their own parsers.
+ *
+ * @param string $content_type the content-type for the parser.
+ * @param callable $parser(input) the parser function (takes a string as
+ *           a parameter and returns an array of RDF statements).
+ */
+function jsonld_register_rdf_parser($content_type, $parser) {
+  global $jsonld_rdf_parsers;
+  $jsonld_rdf_parsers->{$content_type} = $parser;
+}
+
+/**
+ * Unregisters a global RDF Statement parser by content-type.
+ *
+ * @param string $content_type the content-type for the parser.
+ */
+function jsonld_unregister_rdf_parser($content_type) {
+  global $jsonld_rdf_parsers;
+  unset($jsonld_rdf_parsers->{$content_type});
+}
+
 /**
  * A JSON-LD processor.
  */
@@ -199,6 +226,9 @@ class JsonLdProcessor {
 
   /** Restraints */
   const MAX_CONTEXT_URLS = 10;
+
+  /** Processor-specific RDF Statement parsers. */
+  protected $rdfParsers = null;
 
   /**
    * Constructs a JSON-LD processor.
@@ -475,20 +505,29 @@ class JsonLdProcessor {
    * @return array the JSON-LD output.
    */
   public function fromRDF($statements, $options) {
+    global $jsonld_rdf_parsers;
+
     // set default options
     isset($options['format']) or $options['format'] = 'application/nquads';
     isset($options['notType']) or $options['notType'] = false;
 
     if(is_string($statements)) {
-      // supported formats
-      if($options['format'] === 'application/nquads') {
-        $statements = $this->_parseNQuads($statements);
-      }
-      else {
+      // supported formats (processor-specific and global)
+      if(($this->rdfParsers !== null &&
+        !property_exists($this->rdfParsers, $options['format'])) ||
+        $this->rdfParsers === null &&
+        !property_exists($jsonld_rdf_parsers, $options['format'])) {
         throw new JsonLdException(
           'Unknown input format.',
           'jsonld.UnknownFormat', array('format' => $options['format']));
       }
+      if($this->rdfParsers !== null) {
+        $callable = $this->rdfParsers->{$options['format']};
+      }
+      else {
+        $callable = $jsonld_rdf_parsers->{$options['format']};
+      }
+      $statements = call_user_func($callable, $statements);
     }
 
     // convert from RDF
@@ -815,6 +854,38 @@ class JsonLdProcessor {
     }
 
     return $rval;
+  }
+
+  /**
+   * Registers a processor-specific RDF Statement parser by content-type.
+   * Global parsers will no longer be used by this processor.
+   *
+   * @param string $content_type the content-type for the parser.
+   * @param callable $parser(input) the parser function (takes a string as
+   *           a parameter and returns an array of RDF statements).
+   */
+  public function registerRDFParser($content_type, $parser) {
+    if($this->rdfParsers === null) {
+      $this->rdfParsers = new stdClass();
+    }
+    $this->rdfParsers->{$content_type} = $parser;
+  }
+
+  /**
+   * Unregisters a process-specific RDF Statement parser by content-type. If
+   * there are no remaining processor-specific parsers, then the global
+   * parsers will be re-enabled.
+   *
+   * @param string $content_type the content-type for the parser.
+   */
+  public function unregisterRDFParser($content_type) {
+    if($this->rdfParsers !== null &&
+      property_exists($this->rdfParsers, $content_type)) {
+      unset($this->rdfParsers->{$content_type});
+      if(count(get_object_vars($content_type)) === 0) {
+        $this->rdfParsers = null;
+      }
+    }
   }
 
   /**
@@ -3695,6 +3766,10 @@ class JsonLdProcessor {
     return $quad;
   }
 }
+
+// register the N-Quads RDF parser
+jsonld_register_rdf_parser(
+  'application/nquads', 'JsonLdProcessor::_parseNQuads');
 
 /**
  * A JSON-LD Exception.
