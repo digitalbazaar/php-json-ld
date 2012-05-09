@@ -572,7 +572,7 @@ class JsonLdProcessor {
       if($options['format'] === 'application/nquads') {
         $nquads = array();
         foreach($statements as $statement) {
-          $nquads[] = $this->_toNQuad($statement);
+          $nquads[] = $this->toNQuad($statement);
         }
         sort($nquads);
         $statements = implode($nquads);
@@ -854,6 +854,179 @@ class JsonLdProcessor {
     }
 
     return $rval;
+  }
+
+  /**
+   * Parses statements in the form of N-Quads.
+   *
+   * @param string $input the N-Quads input to parse.
+   *
+   * @return array the resulting RDF statements.
+   */
+  public static function parseNQuads($input) {
+    // define partial regexes
+    $iri = '(?:<([^:]+:[^>]*)>)';
+    $bnode = '(_:(?:[A-Za-z][A-Za-z0-9]*))';
+    $plain = '"([^"\\\\]*(?:\\\\.[^"\\\\]*)*)"';
+    $datatype = "(?:\\^\\^$iri)";
+    $language = '(?:@([a-z]+(?:-[a-z0-9]+)*))';
+    $literal = "(?:$plain(?:$datatype|$language)?)";
+    $ws = '[ \\t]';
+    $eoln = '/(?:\r\n)|(?:\n)|(?:\r)/';
+    $empty = "/^$ws*$/";
+
+    // define quad part regexes
+    $subject = "(?:$iri|$bnode)$ws+";
+    $property = "$iri$ws+";
+    $object = "(?:$iri|$bnode|$literal)$ws*";
+    $graph = "(?:\\.|(?:(?:$iri|$bnode)$ws*\\.))";
+
+    // full quad regex
+    $quad = "/^$ws*$subject$property$object$graph$ws*$/";
+
+    // build RDF statements
+    $statements = array();
+
+    // split N-Quad input into lines
+    $lines = preg_split($eoln, $input);
+    $line_number = 0;
+    foreach($lines as $line) {
+      $line_number += 1;
+
+      // skip empty lines
+      if(preg_match($empty, $line)) {
+        continue;
+      }
+
+      // parse quad
+      if(!preg_match($quad, $line, $match)) {
+        throw new JsonLdException(
+            'Error while parsing N-Quads; invalid quad.',
+            'jsonld.ParseError', array('line' => $line_number));
+      }
+
+      // create RDF statement
+      $s = (object)array(
+          'subject' => new stdClass(),
+          'property' => new stdClass(),
+          'object' => new stdClass());
+
+      // get subject
+      if($match[1] !== '') {
+        $s->subject->nominalValue = $match[1];
+        $s->subject->interfaceName = 'IRI';
+      }
+      else {
+        $s->subject->nominalValue = $match[2];
+        $s->subject->interfaceName = 'BlankNode';
+      }
+
+      // get property
+      $s->property->nominalValue = $match[3];
+      $s->property->interfaceName = 'IRI';
+
+      // get object
+      if($match[4] !== '') {
+        $s->object->nominalValue = $match[4];
+        $s->object->interfaceName = 'IRI';
+      }
+      else if($match[5] !== '') {
+        $s->object->nominalValue = $match[5];
+        $s->object->interfaceName = 'BlankNode';
+      }
+      else {
+        $s->object->nominalValue = $match[6];
+        $s->object->interfaceName = 'LiteralNode';
+        if(isset($match[7]) && $match[7] !== '') {
+          $s->object->datatype = (object)array(
+              'nominalValue' => $match[7], 'interfaceName' => 'IRI');
+        }
+        else if(isset($match[8]) && $match[8] !== '') {
+          $s->object->language = $match[8];
+        }
+      }
+
+      // get graph
+      if(isset($match[9]) && $match[9] !== '') {
+        $s->name = (object)array(
+            'nominalValue' => $match[9], 'interfaceName' => 'IRI');
+      }
+      else if(isset($match[10]) && $match[10] !== '') {
+        $s->name = (object)array(
+            'nominalValue' => $match[10], 'interfaceName' => 'BlankNode');
+      }
+
+      // add statement
+      $statements[] = $s;
+    }
+
+    return $statements;
+  }
+
+  /**
+   * Converts an RDF statement to an N-Quad string (a single quad).
+   *
+   * @param stdClass $statement the RDF statement to convert.
+   * @param string $bnode the bnode the staetment is mapped to (optional, for
+   *           use during normalization only).
+   *
+   * @return the N-Quad string.
+   */
+  public static function toNQuad($statement, $bnode=null) {
+    $s = $statement->subject;
+    $p = $statement->property;
+    $o = $statement->object;
+    $g = property_exists($statement, 'name') ? $statement->name : null;
+
+    $quad = '';
+
+    // subject is an IRI or bnode
+    if($s->interfaceName === 'IRI') {
+      $quad .= "<{$s->nominalValue}>";
+    }
+    // normalization mode
+    else if($bnode !== null) {
+      $quad .= ($s->nominalValue === $bnode) ? '_:a' : '_:z';
+    }
+    // normal mode
+    else {
+      $quad .= $s->nominalValue;
+    }
+
+    // property is always an IRI
+    $quad .= " <{$p->nominalValue}> ";
+
+    // object is IRI, bnode, or literal
+    if($o->interfaceName === 'IRI') {
+      $quad .= "<{$o->nominalValue}>";
+    }
+    else if($o->interfaceName === 'BlankNode') {
+      // normalization mode
+      if($bnode !== null) {
+        $quad .= ($o->nominalValue === $bnode) ? '_:a' : '_:z';
+      }
+      // normal mode
+      else {
+        $quad .= $o->nominalValue;
+      }
+    }
+    else {
+      $quad .= '"' . $o->nominalValue . '"';
+      if(property_exists($o, 'datatype')) {
+        $quad .= "^^<{$o->datatype->nominalValue}>";
+      }
+      else if(property_exists($o, 'language')) {
+        $quad .= '@' . $o->language;
+      }
+    }
+
+    // graph
+    if($g !== null) {
+      $quad .= " <{$g->nominalValue}>";
+    }
+
+    $quad .= " .\n";
+    return $quad;
   }
 
   /**
@@ -1415,7 +1588,7 @@ class JsonLdProcessor {
             $statement->{$node}->nominalValue);
         }
       }
-      $normalized[] = $this->_toNQuad($statement);
+      $normalized[] = $this->toNQuad($statement);
     }
 
     // sort normalized output
@@ -1434,7 +1607,7 @@ class JsonLdProcessor {
     }
 
     // return parsed RDF statements
-    return $this->_parseNQuads(implode($normalized));
+    return $this->parseNQuads(implode($normalized));
   }
 
   /**
@@ -1952,7 +2125,7 @@ class JsonLdProcessor {
     $statements = $bnodes->{$id}->statements;
     $nquads = array();
     foreach($statements as $statement) {
-      $nquads[] = $this->_toNQuad($statement, $id);
+      $nquads[] = $this->toNQuad($statement, $id);
     }
 
     // sort serialized quads
@@ -3591,184 +3764,11 @@ class JsonLdProcessor {
   protected static function _isAbsoluteIri($v) {
     return strpos($v, ':') !== false;
   }
-
-  /**
-   * Parses statements in the form of N-Quads.
-   *
-   * @param string $input the N-Quads input to parse.
-   *
-   * @return array the resulting RDF statements.
-   */
-  protected static function _parseNQuads($input) {
-    // define partial regexes
-    $iri = '(?:<([^:]+:[^>]*)>)';
-    $bnode = '(_:(?:[A-Za-z][A-Za-z0-9]*))';
-    $plain = '"([^"\\\\]*(?:\\\\.[^"\\\\]*)*)"';
-    $datatype = "(?:\\^\\^$iri)";
-    $language = '(?:@([a-z]+(?:-[a-z0-9]+)*))';
-    $literal = "(?:$plain(?:$datatype|$language)?)";
-    $ws = '[ \\t]';
-    $eoln = '/(?:\r\n)|(?:\n)|(?:\r)/';
-    $empty = "/^$ws*$/";
-
-    // define quad part regexes
-    $subject = "(?:$iri|$bnode)$ws+";
-    $property = "$iri$ws+";
-    $object = "(?:$iri|$bnode|$literal)$ws*";
-    $graph = "(?:\\.|(?:(?:$iri|$bnode)$ws*\\.))";
-
-    // full quad regex
-    $quad = "/^$ws*$subject$property$object$graph$ws*$/";
-
-    // build RDF statements
-    $statements = array();
-
-    // split N-Quad input into lines
-    $lines = preg_split($eoln, $input);
-    $line_number = 0;
-    foreach($lines as $line) {
-      $line_number += 1;
-
-      // skip empty lines
-      if(preg_match($empty, $line)) {
-        continue;
-      }
-
-      // parse quad
-      if(!preg_match($quad, $line, $match)) {
-        throw new JsonLdException(
-          'Error while parsing N-Quads; invalid quad.',
-          'jsonld.ParseError', array('line' => $line_number));
-      }
-
-      // create RDF statement
-      $s = (object)array(
-        'subject' => new stdClass(),
-        'property' => new stdClass(),
-        'object' => new stdClass());
-
-      // get subject
-      if($match[1] !== '') {
-        $s->subject->nominalValue = $match[1];
-        $s->subject->interfaceName = 'IRI';
-      }
-      else {
-        $s->subject->nominalValue = $match[2];
-        $s->subject->interfaceName = 'BlankNode';
-      }
-
-      // get property
-      $s->property->nominalValue = $match[3];
-      $s->property->interfaceName = 'IRI';
-
-      // get object
-      if($match[4] !== '') {
-        $s->object->nominalValue = $match[4];
-        $s->object->interfaceName = 'IRI';
-      }
-      else if($match[5] !== '') {
-        $s->object->nominalValue = $match[5];
-        $s->object->interfaceName = 'BlankNode';
-      }
-      else {
-        $s->object->nominalValue = $match[6];
-        $s->object->interfaceName = 'LiteralNode';
-        if(isset($match[7]) && $match[7] !== '') {
-          $s->object->datatype = (object)array(
-            'nominalValue' => $match[7], 'interfaceName' => 'IRI');
-        }
-        else if(isset($match[8]) && $match[8] !== '') {
-          $s->object->language = $match[8];
-        }
-      }
-
-      // get graph
-      if(isset($match[9]) && $match[9] !== '') {
-        $s->name = (object)array(
-          'nominalValue' => $match[9], 'interfaceName' => 'IRI');
-      }
-      else if(isset($match[10]) && $match[10] !== '') {
-        $s->name = (object)array(
-          'nominalValue' => $match[10], 'interfaceName' => 'BlankNode');
-      }
-
-      // add statement
-      $statements[] = $s;
-    }
-
-    return $statements;
-  }
-
-  /**
-   * Converts an RDF statement to an N-Quad string (a single quad).
-   *
-   * @param stdClass $statement the RDF statement to convert.
-   * @param string $bnode the bnode the staetment is mapped to (optional, for
-   *           use during normalization only).
-   *
-   * @return the N-Quad string.
-   */
-  protected static function _toNQuad($statement, $bnode=null) {
-    $s = $statement->subject;
-    $p = $statement->property;
-    $o = $statement->object;
-    $g = property_exists($statement, 'name') ? $statement->name : null;
-
-    $quad = '';
-
-    // subject is an IRI or bnode
-    if($s->interfaceName === 'IRI') {
-      $quad .= "<{$s->nominalValue}>";
-    }
-    // normalization mode
-    else if($bnode !== null) {
-      $quad .= ($s->nominalValue === $bnode) ? '_:a' : '_:z';
-    }
-    // normal mode
-    else {
-      $quad .= $s->nominalValue;
-    }
-
-    // property is always an IRI
-    $quad .= " <{$p->nominalValue}> ";
-
-    // object is IRI, bnode, or literal
-    if($o->interfaceName === 'IRI') {
-      $quad .= "<{$o->nominalValue}>";
-    }
-    else if($o->interfaceName === 'BlankNode') {
-      // normalization mode
-      if($bnode !== null) {
-        $quad .= ($o->nominalValue === $bnode) ? '_:a' : '_:z';
-      }
-      // normal mode
-      else {
-        $quad .= $o->nominalValue;
-      }
-    }
-    else {
-      $quad .= '"' . $o->nominalValue . '"';
-      if(property_exists($o, 'datatype')) {
-        $quad .= "^^<{$o->datatype->nominalValue}>";
-      }
-      else if(property_exists($o, 'language')) {
-        $quad .= '@' . $o->language;
-      }
-    }
-
-    // graph
-    if($g !== null) {
-      $quad .= " <{$g->nominalValue}>";
-    }
-
-    $quad .= " .\n";
-    return $quad;
-  }
 }
 
 // register the N-Quads RDF parser
 jsonld_register_rdf_parser(
-  'application/nquads', 'JsonLdProcessor::_parseNQuads');
+  'application/nquads', 'JsonLdProcessor::parseNQuads');
 
 /**
  * A JSON-LD Exception.
