@@ -113,7 +113,7 @@ function jsonld_normalize($input, $options=array()) {
  *          specified by the format option or an array of the RDF statements
  *          to convert.
  * @param assoc [$options] the options to use:
- *          [format] the format if input is a string:
+ *          [format] the format if input not an array:
  *            'application/nquads' for N-Quads (default).
  *          [notType] true to use rdf:type, false to use @type (default).
  *
@@ -513,7 +513,7 @@ class JsonLdProcessor {
     isset($options['format']) or $options['format'] = 'application/nquads';
     isset($options['notType']) or $options['notType'] = false;
 
-    if(is_string($statements)) {
+    if(!is_array($statements)) {
       // supported formats (processor-specific and global)
       if(($this->rdfParsers !== null &&
         !property_exists($this->rdfParsers, $options['format'])) ||
