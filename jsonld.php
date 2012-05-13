@@ -903,15 +903,15 @@ class JsonLdProcessor {
       // parse quad
       if(!preg_match($quad, $line, $match)) {
         throw new JsonLdException(
-            'Error while parsing N-Quads; invalid quad.',
-            'jsonld.ParseError', array('line' => $line_number));
+          'Error while parsing N-Quads; invalid quad.',
+          'jsonld.ParseError', array('line' => $line_number));
       }
 
       // create RDF statement
       $s = (object)array(
-          'subject' => new stdClass(),
-          'property' => new stdClass(),
-          'object' => new stdClass());
+        'subject' => new stdClass(),
+        'property' => new stdClass(),
+        'object' => new stdClass());
 
       // get subject
       if($match[1] !== '') {
@@ -937,11 +937,15 @@ class JsonLdProcessor {
         $s->object->interfaceName = 'BlankNode';
       }
       else {
-        $s->object->nominalValue = $match[6];
+        $unescaped = str_replace(
+           array('\"', '\t', '\n', '\r', '\\\\'),
+           array('"', "\t", "\n", "\r", '\\'),
+           $match[6]);
+        $s->object->nominalValue = $unescaped;
         $s->object->interfaceName = 'LiteralNode';
         if(isset($match[7]) && $match[7] !== '') {
           $s->object->datatype = (object)array(
-              'nominalValue' => $match[7], 'interfaceName' => 'IRI');
+            'nominalValue' => $match[7], 'interfaceName' => 'IRI');
         }
         else if(isset($match[8]) && $match[8] !== '') {
           $s->object->language = $match[8];
@@ -951,11 +955,11 @@ class JsonLdProcessor {
       // get graph
       if(isset($match[9]) && $match[9] !== '') {
         $s->name = (object)array(
-            'nominalValue' => $match[9], 'interfaceName' => 'IRI');
+          'nominalValue' => $match[9], 'interfaceName' => 'IRI');
       }
       else if(isset($match[10]) && $match[10] !== '') {
         $s->name = (object)array(
-            'nominalValue' => $match[10], 'interfaceName' => 'BlankNode');
+          'nominalValue' => $match[10], 'interfaceName' => 'BlankNode');
       }
 
       // add statement
@@ -1013,7 +1017,11 @@ class JsonLdProcessor {
       }
     }
     else {
-      $quad .= '"' . $o->nominalValue . '"';
+      $escaped = str_replace(
+          array('\\', "\t", "\n", "\r", '"'),
+          array('\\\\', '\t', '\n', '\r', '\"'),
+          $o->nominalValue);
+      $quad .= '"' . $escaped . '"';
       if(property_exists($o, 'datatype')) {
         $quad .= "^^<{$o->datatype->nominalValue}>";
       }
