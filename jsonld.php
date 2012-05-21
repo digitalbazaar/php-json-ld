@@ -2354,8 +2354,8 @@ class JsonLdProcessor {
           continue;
         }
 
-        // copy keywords
-        if(self::_isKeyword($prop)) {
+        // copy non-@type keywords
+        if($prop !== '@type' && self::_isKeyword($prop)) {
           $subject->{$prop} = $objects;
           continue;
         }
@@ -2380,6 +2380,10 @@ class JsonLdProcessor {
               $l = new ArrayObject();
               $this->_flatten($subjects, $o->{'@list'}, $namer, $name, $l);
               $o = (object)array('@list' => (array)$l);
+            }
+            // special-handle @type blank nodes
+            else if($prop === '@type' && strpos($o, '_:') === 0) {
+              $o = $namer->getName($o);
             }
 
             // add non-subject
