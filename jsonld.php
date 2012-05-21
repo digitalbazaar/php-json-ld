@@ -2365,8 +2365,8 @@ class JsonLdProcessor {
           // handle embedded subject or subject reference
           if(self::_isSubject($o) || self::_isSubjectReference($o)) {
             // rename blank node @id
-            $id = property_exists($o, '@id') ? $o->{'@id'} : '_:';
-            if(strpos($id, '_:') === 0) {
+            $id = property_exists($o, '@id') ? $o->{'@id'} : null;
+            if(self::_isBlankNode($o)) {
               $id = $namer->getName($id);
             }
 
