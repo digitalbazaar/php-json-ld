@@ -691,26 +691,36 @@ class JsonLdProcessor {
    * @param stdClass $subject the subject to add the value to.
    * @param string $property the property that relates the value to the subject.
    * @param mixed $value the value to add.
-   * @param bool [$propertyIsArray] true if the property is always an array,
+   * @param bool [$property_is_array] true if the property is always an array,
    *          false if not (default: false).
+   * @param bool [$property_is_list] true if the property is a @list, false
+   *          if not (default: false).
    */
   public static function addValue(
-    $subject, $property, $value, $propertyIsArray=false) {
+    $subject, $property, $value,
+    $property_is_array=false, $property_is_list=false) {
+    if($property === '@list') {
+      $property_is_list = true;
+    }
+
     if(is_array($value)) {
-      if(count($value) === 0 && $propertyIsArray &&
+      if(count($value) === 0 && $property_is_array &&
         !property_exists($subject, $property)) {
         $subject->{$property} = array();
       }
       foreach($value as $v) {
-        self::addValue($subject, $property, $v, $propertyIsArray);
+        self::addValue(
+          $subject, $property, $v, $property_is_array, $property_is_list);
       }
     }
     else if(property_exists($subject, $property)) {
-      $has_value = self::hasValue($subject, $property, $value);
+      // check if subject already has value unless property is list
+      $has_value = (!$property_is_list &&
+        self::hasValue($subject, $property, $value));
 
       // make property an array if value not present or always an array
       if(!is_array($subject->{$property}) &&
-        (!$has_value || $propertyIsArray)) {
+        (!$has_value || $property_is_array)) {
         $subject->{$property} = array($subject->{$property});
       }
 
@@ -721,7 +731,7 @@ class JsonLdProcessor {
     }
     else {
       // add new value as set or single value
-      $subject->{$property} = $propertyIsArray ? array($value) : $value;
+      $subject->{$property} = $property_is_array ? array($value) : $value;
     }
   }
 
@@ -754,11 +764,11 @@ class JsonLdProcessor {
    * @param stdClass $subject the subject.
    * @param string $property the property that relates the value to the subject.
    * @param mixed $value the value to remove.
-   * @param bool [$propertyIsArray] true if the property is always an array,
+   * @param bool [$property_is_array] true if the property is always an array,
    *          false if not (default: false).
    */
   public static function removeValue(
-    $subject, $property, $value, $propertyIsArray=false) {
+    $subject, $property, $value, $property_is_array=false) {
 
     // filter out value
     $filter = function($e) use ($value) {
@@ -770,7 +780,7 @@ class JsonLdProcessor {
     if(count($values) === 0) {
       self::removeProperty($subject, $property);
     }
-    else if(count($values) === 1 && !$propertyIsArray) {
+    else if(count($values) === 1 && !$property_is_array) {
       $subject->{$property} = $values[0];
     }
     else {
@@ -1242,11 +1252,12 @@ class JsonLdProcessor {
 
           // if @container is @set or @list or value is an empty array, use
           // an array when adding value
-          $isArray = ($container === '@set' || $container === '@list' ||
+          $is_array = ($container === '@set' || $container === '@list' ||
             (is_array($v) && count($v) === 0));
 
           // add compact value
-          self::addValue($rval, $prop, $v, $isArray);
+          self::addValue(
+            $rval, $prop, $v, $is_array, ($container === '@list'));
         }
       }
       return $rval;
@@ -1472,11 +1483,17 @@ class JsonLdProcessor {
     // create framing state
     $state = (object)array(
       'options' => $options,
-      'subjects' => new stdClass());
+      'graphs' => (object)array(
+        '@default' => new stdClass(),
+        '@merged' => new stdClass()));
 
-    // produce a map of all subjects and name each bnode
+    // produce a map of all graphs and name each bnode
     $namer = new UniqueNamer('_:t');
-    $this->_flatten($state->subjects, $input, $namer, null, null);
+    $this->_flatten($input, $state->graphs, '@default', $namer, null, null);
+    $namer = new UniqueNamer('_:t');
+    $this->_flatten($input, $state->graphs, '@merged', $namer, null, null);
+    // FIXME: currently uses subjects from @merged graph only
+    $state->subjects = $state->graphs->{'@merged'};
 
     // frame the subjects
     $framed = new ArrayObject();
@@ -2303,98 +2320,111 @@ class JsonLdProcessor {
   /**
    * Recursively flattens the subjects in the given JSON-LD expanded input.
    *
-   * @param stdClass $subjects a map of subject @id to subject.
    * @param mixed $input the JSON-LD expanded input.
+   * @param stdClass $graphs a map of graph name to subject map.
+   * @[ara, string $graph the name of the current graph.
    * @param UniqueNamer $namer the blank node namer.
    * @param mixed $name the name assigned to the current input if it is a bnode.
    * @param mixed $list the list to append to, null for none.
    */
-  protected function _flatten($subjects, $input, $namer, $name, $list) {
+  protected function _flatten($input, $graphs, $graph, $namer, $name, $list) {
     // recurse through array
     if(is_array($input)) {
       foreach($input as $e) {
-        $this->_flatten($subjects, $e, $namer, null, $list);
+        $this->_flatten($e, $graphs, $graph, $namer, null, $list);
       }
+      return;
     }
-    // handle subject
-    else if(is_object($input)) {
-      // add value to list
-      if(self::_isValue($input) && $list) {
-        $list[] = $input;
-        return;
-      }
 
-      // get name for subject
-      if($name === null) {
-        if(property_exists($input, '@id')) {
-          $name = $input->{'@id'};
-        }
-        if(self::_isBlankNode($input)) {
-          $name = $namer->getName($name);
-        }
-      }
-
-      // add subject reference to list
+    // add non-object or value
+    if(!is_object($input) || self::_isValue($input)) {
       if($list !== null) {
-        $list[] = (object)array('@id' => $name);
+        $list[] = $input;
       }
+      return;
+    }
 
-      // create new subject or merge into existing one
-      if(property_exists($subjects, $name)) {
-        $subject = $subjects->{$name};
+    // Note: At this point, input must be a subject.
+
+    // get name for subject
+    if($name === null) {
+      if(property_exists($input, '@id')) {
+        $name = $input->{'@id'};
       }
-      else {
-        $subject = $subjects->{$name} = new stdClass();
-      }
-
-      $subject->{'@id'} = $name;
-      foreach($input as $prop => $objects) {
-        // skip @id
-        if($prop === '@id') {
-          continue;
-        }
-
-        // copy non-@type keywords
-        if($prop !== '@type' && self::_isKeyword($prop)) {
-          $subject->{$prop} = $objects;
-          continue;
-        }
-
-        // iterate over objects
-        foreach($objects as $o) {
-          // handle embedded subject or subject reference
-          if(self::_isSubject($o) || self::_isSubjectReference($o)) {
-            // rename blank node @id
-            $id = property_exists($o, '@id') ? $o->{'@id'} : null;
-            if(self::_isBlankNode($o)) {
-              $id = $namer->getName($id);
-            }
-
-            // add reference and recurse
-            self::addValue($subject, $prop, (object)array('@id' => $id), true);
-            $this->_flatten($subjects, $o, $namer, $id, null);
-          }
-          else {
-            // recurse into list
-            if(self::_isList($o)) {
-              $l = new ArrayObject();
-              $this->_flatten($subjects, $o->{'@list'}, $namer, $name, $l);
-              $o = (object)array('@list' => (array)$l);
-            }
-            // special-handle @type blank nodes
-            else if($prop === '@type' && strpos($o, '_:') === 0) {
-              $o = $namer->getName($o);
-            }
-
-            // add non-subject
-            self::addValue($subject, $prop, $o, true);
-          }
-        }
+      if(self::_isBlankNode($input)) {
+        $name = $namer->getName($name);
       }
     }
-    // add non-object to list
-    else if($list !== null) {
-      $list[] = $input;
+
+    // add subject reference to list
+    if($list !== null) {
+      $list[] = (object)array('@id' => $name);
+    }
+
+    // create new subject or merge into existing one
+    if(!property_exists($graphs, $graph)) {
+      $graphs->{$graph} = new stdClass();
+    }
+    $subjects = $graphs->{$graph};
+    if(!property_exists($subjects, $name)) {
+      $subjects->{$name} = new stdClass();
+    }
+    $subject = $subjects->{$name};
+    $subject->{'@id'} = $name;
+    foreach($input as $prop => $objects) {
+      // skip @id
+      if($prop === '@id') {
+        continue;
+      }
+
+      // recurse into graph
+      if($prop === '@graph') {
+        // add graph subjects map entry
+        if(!property_exists($graphs, $name)) {
+          $graphs->{$name} = new stdClass();
+        }
+        $g = ($graph === '@merged') ? $graph : $name;
+        $this->_flatten($objects, $graphs, $g, $namer, null, null);
+        continue;
+      }
+
+      // copy non-@type keywords
+      if($prop !== '@type' && self::_isKeyword($prop)) {
+        $subject->{$prop} = $objects;
+        continue;
+      }
+
+      // iterate over objects
+      foreach($objects as $o) {
+        // handle embedded subject or subject reference
+        if(self::_isSubject($o) || self::_isSubjectReference($o)) {
+          // rename blank node @id
+          $id = property_exists($o, '@id') ? $o->{'@id'} : null;
+          if(self::_isBlankNode($o)) {
+            $id = $namer->getName($id);
+          }
+
+          // add reference and recurse
+          self::addValue($subject, $prop, (object)array('@id' => $id), true);
+          $this->_flatten($o, $graphs, $graph, $namer, $id, null);
+        }
+        else {
+          // recurse into list
+          if(self::_isList($o)) {
+            $_list = new ArrayObject();
+            $this->_flatten(
+              $o->{'@list'}, $graphs, $graph, $namer, $name, $_list);
+            $o = (object)array('@list' => (array)$_list);
+          }
+          // special-handle @type blank nodes
+          else if($prop === '@type' && strpos($o, '_:') === 0) {
+            $o = $namer->getName($o);
+          }
+
+          // add non-subject
+          self::addValue($subject, $prop, $o, true);
+        }
+      }
     }
   }
 
