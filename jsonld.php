@@ -1146,9 +1146,14 @@ class JsonLdProcessor {
     if(is_object($element)) {
       // element is a @value
       if(self::_isValue($element)) {
-        // if @value is the only key, return its value
+        // if @value is the only key
         if(count(get_object_vars($element)) === 1) {
-          return $element->{'@value'};
+          // if there is no default language, return value of @value
+          if(!property_exists($ctx, '@language')) {
+            return $element->{'@value'};
+          }
+          // return full element
+          return $element;
         }
 
         // get type and language context rules
