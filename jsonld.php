@@ -1160,8 +1160,10 @@ class JsonLdProcessor {
           if(!property_exists($ctx, '@language')) {
             return $element->{'@value'};
           }
-          // return full element
-          return $element;
+          // return full element, alias @value
+          $rval = new stdClass();
+          $rval->{$this->_compactIri($ctx, '@value')} = $element->{'@value'};
+          return $rval;
         }
 
         // get type and language context rules
@@ -1171,19 +1173,29 @@ class JsonLdProcessor {
         // matching @type specified in context, compact element
         if($type !== null &&
           property_exists($element, '@type') && $element->{'@type'} === $type) {
-          $element = $element->{'@value'};
+          return $element->{'@value'};
         }
         // matching @language specified in context, compact element
         else if($language !== null &&
           property_exists($element, '@language') &&
           $element->{'@language'} === $language) {
-          $element = $element->{'@value'};
+          return $element->{'@value'};
         }
-        // compact @type IRI
-        else if(property_exists($element, '@type')) {
-          $element->{'@type'} = $this->_compactIri($ctx, $element->{'@type'});
+        else {
+          $rval = new stdClass();
+          // compact @type IRI
+          if(property_exists($element, '@type')) {
+            $rval->{$this->_compactIri($ctx, '@type')} =
+              $this->_compactIri($ctx, $element->{'@type'});
+          }
+          // alias @language
+          else if(property_exists($element, '@language')) {
+            $rval->{$this->_compactIri($ctx, '@language')} =
+              $element->{'@language'};
+          }
+          $rval->{$this->_compactIri($ctx, '@value')} = $element->{'@value'};
+          return $rval;
         }
-        return $element;
       }
 
       // compact subject references
