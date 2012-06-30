@@ -680,9 +680,8 @@ class JsonLdProcessor {
   }
 
   /**
-   * Adds a value to a subject. If the subject already has the value, it will
-   * not be added. If the value is an array, all values in the array will be
-   * added.
+   * Adds a value to a subject. If the value is an array, all values in the
+   * array will be added.
    *
    * Note: If the value is a subject that already exists as a property of the
    * given subject, this method makes no attempt to deeply merge properties.
@@ -691,36 +690,35 @@ class JsonLdProcessor {
    * @param stdClass $subject the subject to add the value to.
    * @param string $property the property that relates the value to the subject.
    * @param mixed $value the value to add.
-   * @param bool [$property_is_array] true if the property is always an array,
-   *          false if not (default: false).
-   * @param bool [$property_is_list] true if the property is a @list, false
-   *          if not (default: false).
+   * @param assoc [$options] the options to use:
+   *          [propertyIsArray] true if the property is always an array, false
+   *            if not (default: false).
+   *          [allowDuplicate] true to allow duplicates, false not to (uses a
+   *            simple shallow comparison of subject ID or value)
+   *            (default: true).
    */
   public static function addValue(
-    $subject, $property, $value,
-    $property_is_array=false, $property_is_list=false) {
-    if($property === '@list') {
-      $property_is_list = true;
-    }
+    $subject, $property, $value, $options=array()) {
+    isset($options['allowDuplicate']) or $options['allowDuplicate'] = true;
+    isset($options['propertyIsArray']) or $options['propertyIsArray'] = false;
 
     if(is_array($value)) {
-      if(count($value) === 0 && $property_is_array &&
+      if(count($value) === 0 && $options['propertyIsArray'] &&
         !property_exists($subject, $property)) {
         $subject->{$property} = array();
       }
       foreach($value as $v) {
-        self::addValue(
-          $subject, $property, $v, $property_is_array, $property_is_list);
+        self::addValue($subject, $property, $v, $options);
       }
     }
     else if(property_exists($subject, $property)) {
-      // check if subject already has value unless property is list
-      $has_value = (!$property_is_list &&
+      // check if subject already has value if duplicates not allowed
+      $has_value = (!$options['allowDuplicate'] &&
         self::hasValue($subject, $property, $value));
 
       // make property an array if value not present or always an array
       if(!is_array($subject->{$property}) &&
-        (!$has_value || $property_is_array)) {
+        (!$has_value || $options['propertyIsArray'])) {
         $subject->{$property} = array($subject->{$property});
       }
 
@@ -731,7 +729,8 @@ class JsonLdProcessor {
     }
     else {
       // add new value as set or single value
-      $subject->{$property} = $property_is_array ? array($value) : $value;
+      $subject->{$property} = ($options['propertyIsArray'] ?
+        array($value) : $value);
     }
   }
 
@@ -764,11 +763,13 @@ class JsonLdProcessor {
    * @param stdClass $subject the subject.
    * @param string $property the property that relates the value to the subject.
    * @param mixed $value the value to remove.
-   * @param bool [$property_is_array] true if the property is always an array,
+   * @param assoc [$options] the options to use:
+   *          [propertyIsArray] true if the property is always an array,
    *          false if not (default: false).
    */
   public static function removeValue(
-    $subject, $property, $value, $property_is_array=false) {
+    $subject, $property, $value, $options=array()) {
+    isset($options['propertyIsArray']) or $options['propertyIsArray'] = false;
 
     // filter out value
     $filter = function($e) use ($value) {
@@ -780,7 +781,7 @@ class JsonLdProcessor {
     if(count($values) === 0) {
       self::removeProperty($subject, $property);
     }
-    else if(count($values) === 1 && !$property_is_array) {
+    else if(count($values) === 1 && !$options['property_is_array']) {
       $subject->{$property} = $values[0];
     }
     else {
@@ -1227,7 +1228,8 @@ class JsonLdProcessor {
           // compact property and add value
           $prop = $this->_compactIri($ctx, $key);
           $isArray = (is_array($value) && count($value) === 0);
-          self::addValue($rval, $prop, $value, $isArray);
+          self::addValue(
+            $rval, $prop, $value, array('propertyIsArray' => $isArray));
           continue;
         }
 
@@ -1236,7 +1238,8 @@ class JsonLdProcessor {
         // preserve empty arrays
         if(count($value) === 0) {
           $prop = $this->_compactIri($ctx, $key);
-          self::addValue($rval, $prop, array(), true);
+          self::addValue(
+            $rval, $prop, array(), array('propertyIsArray' => true));
         }
 
         // recusively process array values
@@ -1282,7 +1285,7 @@ class JsonLdProcessor {
 
           // add compact value
           self::addValue(
-            $rval, $prop, $v, $is_array, ($container === '@list'));
+            $rval, $prop, $v, array('propertyIsArray' => $is_array));
         }
       }
       return $rval;
@@ -1440,7 +1443,8 @@ class JsonLdProcessor {
         // add value, use an array if not @id, @type, @value, or @language
         $use_array = !($prop === '@id' || $prop === '@type' ||
           $prop === '@value' || $prop === '@language');
-        self::addValue($rval, $prop, $value, $use_array);
+        self::addValue(
+          $rval, $prop, $value, array('propertyIsArray' => $use_array));
       }
     }
 
@@ -1747,12 +1751,13 @@ class JsonLdProcessor {
       // convert to @type unless options indicate to treat rdf:type as property
       if($p === self::RDF_TYPE && !$options['notType']) {
         // add value of object as @type
-        self::addValue($value, '@type', $o->nominalValue, true);
+        self::addValue(
+          $value, '@type', $o->nominalValue, array('propertyIsArray' => true));
       }
       else {
         // add property to value as needed
         $object = $this->_rdfToObject($o);
-        self::addValue($value, $p, $object, true);
+        self::addValue($value, $p, $object, array('propertyIsArray' => true));
 
         // a bnode might be the beginning of a list, so add it to the list map
         if($o->interfaceName === 'BlankNode') {
@@ -2430,7 +2435,9 @@ class JsonLdProcessor {
           }
 
           // add reference and recurse
-          self::addValue($subject, $prop, (object)array('@id' => $id), true);
+          self::addValue(
+            $subject, $prop, (object)array('@id' => $id),
+            array('propertyIsArray' => true));
           $this->_flatten($o, $graphs, $graph, $namer, $id, null);
         }
         else {
@@ -2447,7 +2454,7 @@ class JsonLdProcessor {
           }
 
           // add non-subject
-          self::addValue($subject, $prop, $o, true);
+          self::addValue($subject, $prop, $o, array('propertyIsArray' => true));
         }
       }
     }
@@ -2780,8 +2787,10 @@ class JsonLdProcessor {
     else {
       // replace subject with reference
       $use_array = is_array($embed->parent->{$property});
-      self::removeValue($embed->parent, $property, $subject, $use_array);
-      self::addValue($embed->parent, $property, $subject, $use_array);
+      self::removeValue($embed->parent, $property, $subject,
+        array('propertyIsArray' => $use_array));
+      self::addValue($embed->parent, $property, $subject,
+        array('propertyIsArray' => $use_array));
     }
 
     // recursively remove dependent dangling embeds
@@ -2810,7 +2819,8 @@ class JsonLdProcessor {
    */
   protected function _addFrameOutput($state, $parent, $property, $output) {
     if(is_object($parent) && !($parent instanceof ArrayObject)) {
-      self::addValue($parent, $property, $output, true);
+      self::addValue(
+        $parent, $property, $output, array('propertyIsArray' => true));
     }
     else {
       $parent[] = $output;
