@@ -3029,7 +3029,8 @@ class JsonLdProcessor {
         continue;
       }
       // skip @list containers for non-@lists
-      if(!$is_list && $has_container && $entry->{'@container'} === '@list') {
+      if(!$is_list && $has_container && $entry->{'@container'} === '@list' &&
+        $value !== null) {
         continue;
       }
       // for @lists, if list_container is set, skip non-list containers
