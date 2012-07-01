@@ -974,7 +974,7 @@ class JsonLdProcessor {
       }
 
       // add statement
-      $statements[] = $s;
+      JsonLdProcessor::_appendUniqueRdfStatement($statements, $s);
     }
 
     return $statements;
@@ -1157,8 +1157,10 @@ class JsonLdProcessor {
       if(self::_isValue($element)) {
         // if @value is the only key
         if(count(get_object_vars($element)) === 1) {
-          // if there is no default language, return value of @value
-          if(!property_exists($ctx, '@language')) {
+          // if there is no default language or @value is not a string,
+          // return value of @value
+          if(!property_exists($ctx, '@language') ||
+            !is_string($element->{'@value'})) {
             return $element->{'@value'};
           }
           // return full element, alias @value
@@ -1885,7 +1887,7 @@ class JsonLdProcessor {
         if($graph !== null) {
           $statement->name = $graph;
         }
-        $statements[] = $statement;
+        JsonLdProcessor::_appendUniqueRdfStatement($statements, $statement);
         return;
       }
 
@@ -1919,7 +1921,7 @@ class JsonLdProcessor {
         if($graph !== null) {
           $statement->name = $graph;
         }
-        $statements[] = $statement;
+        JsonLdProcessor::_appendUniqueRdfStatement($statements, $statement);
       }
 
       // set new active subject to object
@@ -1981,7 +1983,7 @@ class JsonLdProcessor {
       if($graph !== null) {
         $statement->name = $graph;
       }
-      $statements[] = $statement;
+      JsonLdProcessor::_appendUniqueRdfStatement($statements, $statement);
       return;
     }
   }
@@ -3654,6 +3656,74 @@ class JsonLdProcessor {
         '@type'=> array(),
         '@value'=> array()
       ));
+  }
+
+  /**
+   * Compares two RDF statements for equality.
+   *
+   * @param stdClass $s1 the first statement.
+   * @param stdClass $s2 the second statement.
+   *
+   * @return true if the statements are the same, false if not.
+   */
+  protected static function _compareRdfStatements($s1, $s2) {
+    if(is_string($s1) || is_string($s2)) {
+      return $s1 === $s2;
+    }
+
+    $attrs = array('subject', 'property', 'object');
+    foreach($attrs as $attr) {
+      if($s1->{$attr}->interfaceName !== $s2->{$attr}->interfaceName ||
+      $s1->{$attr}->nominalValue !== $s2->{$attr}->nominalValue) {
+        return false;
+      }
+    }
+    if(property_exists($s1->object, 'language') !==
+        property_exists($s1->object, 'language')) {
+      return false;
+    }
+    if(property_exists($s1->object, 'language')) {
+      if($s1->object->language !== $s2->object->language) {
+        return false;
+      }
+    }
+    if(property_exists($s1->object, 'datatype') !==
+        property_exists($s1->object, 'datatype')) {
+      return false;
+    }
+    if(property_exists($s1->object, 'datatype')) {
+      if($s1->object->datatype->interfaceName !==
+          $s2->object->datatype->interfaceName ||
+          $s1->object->datatype->nominalValue !==
+          $s2->object->datatype->nominalValue) {
+        return false;
+      }
+    }
+    if(property_exists($s1, 'name') !== property_exists($s1, 'name')) {
+      return false;
+    }
+    if(property_exists($s1, 'name')) {
+      if($s1->name !== $s2->name) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /**
+   * Appends an RDF statement to the given array of statements if it is unique.
+   *
+   * @param array $statements the array to add to.
+   * @param stdClass $statement the statement to add.
+   */
+  protected static function _appendUniqueRdfStatement(
+    &$statements, $statement) {
+    foreach($statements as $s) {
+      if(JsonLdProcessor::_compareRdfStatements($s, $statement)) {
+        return;
+      }
+    }
+    $statements[] = $statement;
   }
 
   /**
