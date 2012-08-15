@@ -743,7 +743,8 @@ class JsonLdProcessor {
    * @return array all of the values for a subject's property as an array.
    */
   public static function getValues($subject, $property) {
-    $rval = $subject->{$property} ?: array();
+    $rval = (property_exists($subject, $property) ?
+      $subject->{$property} : array());
     return self::arrayify($rval);
   }
 
