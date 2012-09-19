@@ -142,6 +142,7 @@ function jsonld_to_rdf($input, $options=array()) {
 }
 
 /** The default JSON-LD URL resolver. */
+global $jsonld_default_url_resolver;
 $jsonld_default_url_resolver = null;
 
 /**
@@ -183,6 +184,7 @@ function jsonld_resolve_url($url) {
 }
 
 /** Registered global RDF Statement parsers hashed by content-type. */
+global $jsonld_rdf_parsers;
 $jsonld_rdf_parsers = new stdClass();
 
 /**
