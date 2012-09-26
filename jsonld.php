@@ -115,7 +115,10 @@ function jsonld_normalize($input, $options=array()) {
  * @param assoc [$options] the options to use:
  *          [format] the format if input not an array:
  *            'application/nquads' for N-Quads (default).
- *          [notType] true to use rdf:type, false to use @type (default).
+ *          [useRdfType] true to use rdf:type, false to use @type
+ *            (default: false).
+ *          [useNativeTypes] true to convert XSD types into native types
+ *            (boolean, integer, double), false not to (default: true).
  *
  * @return array the JSON-LD output.
  */
@@ -221,6 +224,7 @@ class JsonLdProcessor {
   const XSD_BOOLEAN = 'http://www.w3.org/2001/XMLSchema#boolean';
   const XSD_DOUBLE = 'http://www.w3.org/2001/XMLSchema#double';
   const XSD_INTEGER = 'http://www.w3.org/2001/XMLSchema#integer';
+  const XSD_STRING = 'http://www.w3.org/2001/XMLSchema#string';
 
   /** RDF constants */
   const RDF_FIRST = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#first';
@@ -504,7 +508,10 @@ class JsonLdProcessor {
    * @param assoc $options the options to use:
    *          [format] the format if input is a string:
    *            'application/nquads' for N-Quads (default).
-   *          [notType] true to use rdf:type, false to use @type (default).
+   *          [useRdfType] true to use rdf:type, false to use @type
+   *            (default: false).
+   *          [useNativeTypes] true to convert XSD types into native types
+   *            (boolean, integer, double), false not to (default: true).
    *
    * @return array the JSON-LD output.
    */
@@ -513,7 +520,8 @@ class JsonLdProcessor {
 
     // set default options
     isset($options['format']) or $options['format'] = 'application/nquads';
-    isset($options['notType']) or $options['notType'] = false;
+    isset($options['useRdfType']) or $options['useRdfType'] = false;
+    isset($options['useNativeTypes']) or $options['useNativeTypes'] = true;
 
     if(!is_array($statements)) {
       // supported formats (processor-specific and global)
@@ -1036,7 +1044,8 @@ class JsonLdProcessor {
           array('\\\\', '\t', '\n', '\r', '\"'),
           $o->nominalValue);
       $quad .= '"' . $escaped . '"';
-      if(property_exists($o, 'datatype')) {
+      if(property_exists($o, 'datatype') &&
+        $o->datatype->nominalValue !== JsonLdProcessor::XSD_STRING) {
         $quad .= "^^<{$o->datatype->nominalValue}>";
       }
       else if(property_exists($o, 'language')) {
@@ -1717,7 +1726,7 @@ class JsonLdProcessor {
           $entry = $list_map->{$s};
         }
         // set object value
-        $entry->first = $this->_rdfToObject($o);
+        $entry->first = $this->_rdfToObject($o, $options['useNativeTypes']);
         continue;
       }
 
@@ -1754,14 +1763,14 @@ class JsonLdProcessor {
       }
 
       // convert to @type unless options indicate to treat rdf:type as property
-      if($p === self::RDF_TYPE && !$options['notType']) {
+      if($p === self::RDF_TYPE && !$options['useRdfType']) {
         // add value of object as @type
         self::addValue(
           $value, '@type', $o->nominalValue, array('propertyIsArray' => true));
       }
       else {
         // add property to value as needed
-        $object = $this->_rdfToObject($o);
+        $object = $this->_rdfToObject($o, $options['useNativeTypes']);
         self::addValue($value, $p, $object, array('propertyIsArray' => true));
 
         // a bnode might be the beginning of a list, so add it to the list map
@@ -1858,9 +1867,9 @@ class JsonLdProcessor {
             $datatype or $datatype = self::XSD_BOOLEAN;
           }
           else if(is_double($value)) {
-            // do special JSON-LD double format, printf('%1.15e') equivalent
-            $value = preg_replace('/(e(?:\+|-))([0-9])$/', '${1}0${2}',
-              sprintf('%1.15e', $value));
+            // canonical double representation
+            $value = preg_replace('/(\d)0*E\+?/', '$1E',
+              sprintf('%1.15E', $value));
             $datatype or $datatype = self::XSD_DOUBLE;
           }
           else {
@@ -1869,16 +1878,17 @@ class JsonLdProcessor {
           }
         }
 
+        // default to xsd:string datatype
+        $datatype or $datatype = self::XSD_STRING;
+
         $object = (object)array(
           'nominalValue' => $value,
-          'interfaceName' => 'LiteralNode');
-
-        if($datatype !== null) {
-          $object->datatype = (object)array(
+          'interfaceName' => 'LiteralNode',
+          'datatype' => (object)array(
             'nominalValue' => $datatype,
-            'interfaceName' => 'IRI');
-        }
-        else if(property_exists($element, '@language')) {
+            'interfaceName' => 'IRI'));
+        if(property_exists($element, '@language') &&
+          $datatype === self::XSD_STRING) {
           $object->language = $element->{'@language'};
         }
 
@@ -2102,10 +2112,11 @@ class JsonLdProcessor {
    * Converts an RDF statement object to a JSON-LD object.
    *
    * @param stdClass $o the RDF statement object to convert.
+   * @param bool $use_native_types true to output native types, false not to.
    *
    * @return stdClass the JSON-LD object.
    */
-  protected function _rdfToObject($o) {
+  protected function _rdfToObject($o, $use_native_types) {
     // convert empty list
     if($o->interfaceName === 'IRI' && $o->nominalValue === self::RDF_NIL) {
       return (object)array('@list' => array());
@@ -2121,22 +2132,39 @@ class JsonLdProcessor {
 
     // add datatype
     if(property_exists($o, 'datatype')) {
-      /*
-      // use native datatypes for certain xsd types
       $type = $o->datatype->nominalValue;
-      if($type === self::XSD_BOOLEAN) {
-        $element = !($element === 'false' || $element === '0');
+      // use native types for certain xsd types
+      if($use_native_types) {
+        if($type === self::XSD_BOOLEAN) {
+          if($rval->{'@value'} === 'true') {
+            $rval->{'@value'} = true;
+          }
+          else if($rval->{'@value'} === 'false') {
+            $rval->{'@value'} = false;
+          }
+        }
+        else if(is_numeric($rval->{'@value'})) {
+          if($type === self::XSD_INTEGER) {
+            $i = intval($rval->{'@value'});
+            if(strval($i) === $rval->{'@value'}) {
+              $rval->{'@value'} = $i;
+            }
+          }
+          else if($type === self::XSD_DOUBLE) {
+            $rval->{'@value'} = doubleval($rval->{'@value'});
+          }
+        }
+        // do not add xsd:string type
+        if($type !== self::XSD_STRING) {
+          $rval->{'@type'} = $type;
+        }
       }
-      else if($type === self::XSD_INTEGER) {
-        $element = intval($element);
+      else {
+        $rval->{'@type'} = $type;
       }
-      else if($type === self::XSD_DOUBLE) {
-        $element = doubleval($element);
-      }*/
-      $rval->{'@type'} = $o->datatype->nominalValue;
     }
     // add language
-    else if(property_exists($o, 'language')) {
+    if(property_exists($o, 'language')) {
       $rval->{'@language'} = $o->language;
     }
 
@@ -3069,6 +3097,20 @@ class JsonLdProcessor {
       }
     }
 
+    // no matching terms, use @vocab if available
+    if(count($terms) === 0 && property_exists($ctx, '@vocab') &&
+      $ctx->{'@vocab'} !== null) {
+      // determine if vocab is a prefix of the iri
+      $vocab = $ctx->{'@vocab'};
+      if(strpos($iri, $vocab) === 0) {
+        // use suffix as relative iri if it is not a term in the active context
+        $suffix = substr($iri, strlen($vocab));
+        if(!property_exists($ctx->mappings, $suffix)) {
+          return $suffix;
+        }
+      }
+    }
+
     // no term matches, add possible CURIEs
     if(count($terms) === 0) {
       foreach($ctx->mappings as $term => $entry) {
@@ -3143,6 +3185,30 @@ class JsonLdProcessor {
     $value = $ctx->{$key};
 
     if(self::_isKeyword($key)) {
+      // support vocab
+      if($key === '@vocab') {
+        if($value !== null && !is_string($value)) {
+          throw new JsonLdException(
+            'Invalid JSON-LD syntax; the value of "@vocab" in a ' +
+            '@context must be a string or null.',
+            'jsonld.SyntaxError', array('context' => $ctx));
+        }
+        if(!self::_isAbsoluteIri($value)) {
+          throw new JsonLdException(
+            'Invalid JSON-LD syntax; the value of "@vocab" in a ' +
+            '@context must be an absolute IRI.',
+            'jsonld.SyntaxError', array('context' => $ctx));
+        }
+        if($value === null) {
+          unset($active_ctx->{'@vocab'});
+        }
+        else {
+          $active_ctx->{'@vocab'} = $value;
+        }
+        $defined->{$key} = true;
+        return;
+      }
+
       // only @language is permitted
       if($key !== '@language') {
         throw new JsonLdException(
@@ -3379,8 +3445,14 @@ class JsonLdProcessor {
       return $value;
     }
 
+    // prepend vocab
+    if(property_exists($ctx, '@vocab') && $ctx->{'@vocab'} !== null) {
+      $value = $this->_prependBase($ctx->{'@vocab'}, $value);
+    }
     // prepend base
-    $value = $this->_prependBase($base, $value);
+    else {
+      $value = $this->_prependBase($base, $value);
+    }
 
     // value must now be an absolute IRI
     if(!self::_isAbsoluteIri($value)) {
@@ -3444,8 +3516,16 @@ class JsonLdProcessor {
       return $term;
     }
 
+    // use vocab
+    if(property_exists($ctx, '@vocab') && $ctx->{'@vocab'} !== null) {
+      $term = $this->_prependBase($ctx->{'@vocab'}, $term);
+    }
     // prepend base to term
-    return $this->_prependBase($base, $term);
+    else {
+      $term = $this->_prependBase($base, $term);
+    }
+
+    return $term;
   }
 
   /**
@@ -3645,20 +3725,21 @@ class JsonLdProcessor {
     return (object)array(
       'mappings' => new stdClass(),
       'keywords' => (object)array(
-        '@context'=> array(),
-        '@container'=> array(),
-        '@default'=> array(),
-        '@embed'=> array(),
-        '@explicit'=> array(),
-        '@graph'=> array(),
-        '@id'=> array(),
-        '@language'=> array(),
-        '@list'=> array(),
-        '@omitDefault'=> array(),
-        '@preserve'=> array(),
-        '@set'=> array(),
-        '@type'=> array(),
-        '@value'=> array()
+        '@context' => array(),
+        '@container' => array(),
+        '@default' => array(),
+        '@embed' => array(),
+        '@explicit' => array(),
+        '@graph' => array(),
+        '@id' => array(),
+        '@language' => array(),
+        '@list' => array(),
+        '@omitDefault' => array(),
+        '@preserve' => array(),
+        '@set' => array(),
+        '@type' => array(),
+        '@value' => array(),
+        '@vocab' => array()
       ));
   }
 
@@ -3765,6 +3846,7 @@ class JsonLdProcessor {
       case '@set':
       case '@type':
       case '@value':
+      case '@vocab':
         return true;
       }
     }

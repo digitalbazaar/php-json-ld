@@ -104,6 +104,30 @@ function read_test_nquads($file, $filepath) {
   }
 }
 
+/**
+ * JSON-encodes the given input (does not escape slashes).
+ *
+ * @param mixed $input the input to encode.
+ *
+ * @return the encoded input.
+ */
+function jsonld_encode($input) {
+  // newer PHP has a flag to avoid escaped '/'
+  if(defined('JSON_UNESCAPED_SLASHES')) {
+    $options = JSON_UNESCAPED_SLASHES;
+    if(defined('JSON_PRETTY_PRINT')) {
+      $options |= JSON_PRETTY_PRINT;
+    }
+    $json = json_encode($input, $options);
+  }
+  else {
+    // use a simple string replacement of '\/' to '/'.
+    $json = str_replace('\\/', '/', json_encode($input));
+  }
+
+  return $json;
+}
+
 class TestRunner {
   public function __construct() {
     // set up groups, add root group
@@ -159,16 +183,8 @@ class TestRunner {
     else {
       $this->failed += 1;
       echo "FAIL$eol";
-      echo 'Expect: ' . print_r($expect, true) . $eol;
-      echo 'Result: ' . print_r($result, true) . $eol;
-
-      /*
-      $flags = JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT;
-      echo 'JSON Expect: ' .
-        json_encode(json_decode(expect, $flags)) . $eol;
-      echo 'JSON Result: ' .
-        json_encode(json_decode(result, $flags)) . $eol;
-      */
+      echo 'Expect: ' . jsonld_encode($expect) . $eol;
+      echo 'Result: ' . jsonld_encode($result) . $eol;
     }
   }
 
@@ -243,54 +259,62 @@ class TestRunner {
         $type = $test->{'@type'};
         $options = array(
           'base' => 'http://json-ld.org/test-suite/tests/' . $test->input);
-        if(in_array('jld:NormalizeTest', $type)) {
-          $this->test($test->name);
-          $input = read_test_json($test->input, $filepath);
-          $test->expect = read_test_nquads($test->expect, $filepath);
-          $options['format'] = 'application/nquads';
-          $result = jsonld_normalize($input, $options);
-        }
-        else if(in_array('jld:ExpandTest', $type)) {
-          $this->test($test->name);
-          $input = read_test_json($test->input, $filepath);
-          $test->expect = read_test_json($test->expect, $filepath);
-          $result = jsonld_expand($input, $options);
-        }
-        else if(in_array('jld:CompactTest', $type)) {
-          $this->test($test->name);
-          $input = read_test_json($test->input, $filepath);
-          $test->context = read_test_json($test->context, $filepath);
-          $test->expect = read_test_json($test->expect, $filepath);
-          $result = jsonld_compact($input, $test->context, $options);
-        }
-        else if(in_array('jld:FrameTest', $type)) {
-          $this->test($test->name);
-          $input = read_test_json($test->input, $filepath);
-          $test->frame = read_test_json($test->frame, $filepath);
-          $test->expect = read_test_json($test->expect, $filepath);
-          $result = jsonld_frame($input, $test->frame, $options);
-        }
-        else if(in_array('jld:FromRDFTest', $type)) {
-          $this->test($test->name);
-          $input = read_test_nquads($test->input, $filepath);
-          $test->expect = read_test_json($test->expect, $filepath);
-          $result = jsonld_from_rdf($input, $options);
-        }
-        else if(in_array('jld:ToRDFTest', $type)) {
-          $this->test($test->name);
-          $input = read_test_json($test->input, $filepath);
-          $test->expect = read_test_nquads($test->expect, $filepath);
-          $options['format'] = 'application/nquads';
-          $result = jsonld_to_rdf($input, $options);
-        }
-        else {
-          echo "Skipping test \"{$test->name}\" of type: " .
-            json_encode($type) . $eol;
-          continue;
-        }
 
-        // check results
-        $this->check($test, $test->expect, $result);
+        try {
+          if(in_array('jld:NormalizeTest', $type)) {
+            $this->test($test->name);
+            $input = read_test_json($test->input, $filepath);
+            $test->expect = read_test_nquads($test->expect, $filepath);
+            $options['format'] = 'application/nquads';
+            $result = jsonld_normalize($input, $options);
+          }
+          else if(in_array('jld:ExpandTest', $type)) {
+            $this->test($test->name);
+            $input = read_test_json($test->input, $filepath);
+            $test->expect = read_test_json($test->expect, $filepath);
+            $result = jsonld_expand($input, $options);
+          }
+          else if(in_array('jld:CompactTest', $type)) {
+            $this->test($test->name);
+            $input = read_test_json($test->input, $filepath);
+            $test->context = read_test_json($test->context, $filepath);
+            $test->expect = read_test_json($test->expect, $filepath);
+            $result = jsonld_compact($input, $test->context, $options);
+          }
+          else if(in_array('jld:FrameTest', $type)) {
+            $this->test($test->name);
+            $input = read_test_json($test->input, $filepath);
+            $test->frame = read_test_json($test->frame, $filepath);
+            $test->expect = read_test_json($test->expect, $filepath);
+            $result = jsonld_frame($input, $test->frame, $options);
+          }
+          else if(in_array('jld:FromRDFTest', $type)) {
+            $this->test($test->name);
+            $input = read_test_nquads($test->input, $filepath);
+            $test->expect = read_test_json($test->expect, $filepath);
+            $result = jsonld_from_rdf($input, $options);
+          }
+          else if(in_array('jld:ToRDFTest', $type)) {
+            $this->test($test->name);
+            $input = read_test_json($test->input, $filepath);
+            $test->expect = read_test_nquads($test->expect, $filepath);
+            $options['format'] = 'application/nquads';
+            $result = jsonld_to_rdf($input, $options);
+          }
+          else {
+            echo "Skipping test \"{$test->name}\" of type: " .
+              json_encode($type) . $eol;
+            continue;
+          }
+
+          // check results
+          $this->check($test, $test->expect, $result);
+        }
+        catch(JsonLdException $e) {
+          echo $eol . $e;
+          $this->failed += 1;
+          echo "FAIL$eol";
+        }
       }
       if(property_exists($manifest, 'name')) {
         $this->ungroup();
