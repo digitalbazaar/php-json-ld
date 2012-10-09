@@ -217,6 +217,70 @@ function jsonld_unregister_rdf_parser($content_type) {
 }
 
 /**
+ * Converts a relative path into an absolute URL.
+ *
+ * @param string $path the relative path.
+ * @param string $url the absolute URL base.
+ *
+ * @return string the absolute URL for the given relative path.
+ */
+function jsonld_to_absolute_url($path, $url) {
+  // validate path (it may already be an absolute URL)
+  if(filter_var($path, FILTER_VALIDATE_URL) === false) {
+    $url = parse_url($url);
+    $rval = "{$url['scheme']}://";
+
+    if(isset($url['user']) || isset($url['pass'])) {
+      $rval .= "{$url['user']}:{$url['pass']}@";
+    }
+
+    $rval .= $url['host'];
+    if(isset($url['port'])) {
+      $rval .= ":{$url['port']}";
+    }
+
+    $rval .= jsonld_prepend_base($url['path'], $path);
+    if(strrpos($rval, '?') === false && isset($url['query'])) {
+      $rval .= "?{$url['query']}";
+    }
+
+    if(strrpos($rval, '#') === false && isset($url['fragment'])) {
+      $rval .= "#{$url['fragment']}";
+    }
+  }
+  else {
+    $rval = $path;
+  }
+
+  // validate result
+  if(filter_var($rval, FILTER_VALIDATE_URL) === false) {
+    throw new JsonLdException(
+      'Malformed URL.', 'jsonld.InvalidUrl', array('url' => $rval));
+  }
+
+  return $rval;
+}
+
+/**
+ * Prepend a relative IRI to a base IRI.
+ *
+ * @param string $base the base IRI.
+ * @param string $iri the relative IRI.
+ */
+function jsonld_prepend_base($base, $iri) {
+  if($iri === '' || strpos($iri, '#') === 0) {
+    return "$base$iri";
+  }
+
+  // prepend last directory for base
+  $idx = strrpos($base, '/');
+  if($idx === false) {
+    return $iri;
+  }
+  return substr($base, 0, $idx + 1) . $iri;
+}
+
+/**
  * A JSON-LD processor.
  */
 class JsonLdProcessor {
@@ -376,7 +440,8 @@ class JsonLdProcessor {
     // resolve all @context URLs in the input
     $input = self::copy($input);
     try {
-      $this->_resolveContextUrls($input, new stdClass(), $options['resolver']);
+      $this->_resolveContextUrls(
+        $input, new stdClass(), $options['resolver'], $options['base']);
     }
     catch(Exception $e) {
       throw new JsonLdException(
@@ -627,7 +692,8 @@ class JsonLdProcessor {
       $ctx = (object)array('@context' => $ctx);
     }
     try {
-      $this->_resolveContextUrls($ctx, new stdClass(), $options['resolver']);
+      $this->_resolveContextUrls(
+        $ctx, new stdClass(), $options['resolver'], $options['base']);
     }
     catch(Exception $e) {
       throw new JsonLdException(
@@ -3535,17 +3601,18 @@ class JsonLdProcessor {
    * @param stdClass $urls a map of URLs (url => false/@contexts).
    * @param bool $replace true to replace the URLs in the given input with
    *           the @contexts from the urls map, false not to.
+   * @param string $base the base URL to resolve relative URLs with.
    */
-  protected function _findContextUrls($input, $urls, $replace) {
+  protected function _findContextUrls($input, $urls, $replace, $base) {
     if(is_array($input)) {
       foreach($input as $e) {
-        $this->_findContextUrls($e, $urls, $replace);
+        $this->_findContextUrls($e, $urls, $replace, $base);
       }
     }
     else if(is_object($input)) {
       foreach($input as $k => &$v) {
         if($k !== '@context') {
-          $this->_findContextUrls($v, $urls, $replace);
+          $this->_findContextUrls($v, $urls, $replace, $base);
           continue;
         }
 
@@ -3554,7 +3621,7 @@ class JsonLdProcessor {
           $length = count($v);
           for($i = 0; $i < $length; ++$i) {
             if(is_string($v[$i])) {
-              $url = $v[$i];
+              $url = jsonld_to_absolute_url($v[$i], $base);
               // replace w/@context if requested
               if($replace) {
                 $ctx = $urls->{$url};
@@ -3577,6 +3644,7 @@ class JsonLdProcessor {
         }
         // string @context
         else if(is_string($v)) {
+          $v = jsonld_to_absolute_url($v, $base);
           // replace w/@context if requested
           if($replace) {
             $input->{$k} = $urls->{$v};
@@ -3598,10 +3666,12 @@ class JsonLdProcessor {
    * @param mixed $input the JSON-LD input with possible contexts.
    * @param stdClass $cycles an object for tracking context cycles.
    * @param callable $resolver(url) the URL resolver.
+   * @param base $base the base URL to resolve relative URLs against.
    *
    * @return mixed the result.
    */
-  protected function _resolveContextUrls(&$input, $cycles, $resolver) {
+  protected function _resolveContextUrls(
+    &$input, $cycles, $resolver, $base='') {
     if(count(get_object_vars($cycles)) > self::MAX_CONTEXT_URLS) {
       throw new JsonLdException(
         'Maximum number of @context URLs exceeded.',
@@ -3612,17 +3682,12 @@ class JsonLdProcessor {
     $urls = new stdClass();
 
     // find all URLs in the given input
-    $this->_findContextUrls($input, $urls, false);
+    $this->_findContextUrls($input, $urls, false, $base);
 
     // queue all unresolved URLs
     $queue = array();
     foreach($urls as $url => $ctx) {
       if($ctx === false) {
-        // validate URL
-        if(filter_var($url, FILTER_VALIDATE_URL) === false) {
-          throw new JsonLdException(
-              'Malformed URL.', 'jsonld.InvalidUrl', array('url' => $url));
-        }
         $queue[] = $url;
       }
     }
@@ -3684,12 +3749,12 @@ class JsonLdProcessor {
       }
 
       // recurse
-      $this->_resolveContextUrls($ctx, $_cycles, $resolver);
+      $this->_resolveContextUrls($ctx, $_cycles, $resolver, $url);
       $urls->{$url} = $ctx->{'@context'};
     }
 
     // replace all URLS in the input
-    $this->_findContextUrls($input, $urls, true);
+    $this->_findContextUrls($input, $urls, true, $base);
   }
 
   /**
@@ -3701,19 +3766,7 @@ class JsonLdProcessor {
    * @return string the absolute IRI.
    */
   protected function _prependBase($base, $iri) {
-    if($iri === '' || strpos($iri, '#') === 0) {
-      return "$base$iri";
-    }
-    else {
-      // prepend last directory for base
-      $idx = strrpos($base, '/');
-      if($idx === false) {
-        return $iri;
-      }
-      else {
-        return substr($base, 0, $idx + 1) . $iri;
-      }
-    }
+    return jsonld_prepend_base($base, $iri);
   }
 
   /**
