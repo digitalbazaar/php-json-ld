@@ -172,12 +172,24 @@ function jsonld_resolve_url($url) {
   }
 
   // default JSON-LD GET implementation
+  return jsonld_default_resolve_url($url);
+}
+
+/**
+ * The default implementation to retrieve JSON-LD at the given URL.
+ *
+ * @param string $url the URL to to resolve.
+ *
+ * @return the JSON-LD.
+ */
+function jsonld_default_resolve_url($url) {
+  // default JSON-LD GET implementation
   $opts = array('http' =>
-    array(
-      'method' => "GET",
-      'header' =>
-      "Accept: application/ld+json\r\n" .
-      "User-Agent: PaySwarm PHP Client/1.0\r\n"));
+      array(
+          'method' => "GET",
+          'header' =>
+          "Accept: application/ld+json\r\n" .
+          "User-Agent: PaySwarm PHP Client/1.0\r\n"));
   $stream = stream_context_create($opts);
   $result = @file_get_contents($url, false, $stream);
   if($result === false) {
