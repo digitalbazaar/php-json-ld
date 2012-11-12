@@ -2152,11 +2152,8 @@ class JsonLdProcessor {
 
     // special-case expand @id and @type (skips '@id' expansion)
     $prop = $this->_expandTerm($ctx, $property);
-    if($prop === '@id') {
+    if($prop === '@id' || $prop === '@type') {
       $rval = $this->_expandTerm($ctx, $value, $base);
-    }
-    else if($prop === '@type') {
-      $rval = $this->_expandTerm($ctx, $value);
     }
     else {
       // get type definition from context
