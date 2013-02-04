@@ -1,11 +1,12 @@
 <?php
 /**
  * PHP implementation of the JSON-LD API.
+ * Version: 0.0.1
  *
  * @author Dave Longley
  *
  * BSD 3-Clause License
- * Copyright (c) 2011-2012 Digital Bazaar, Inc.
+ * Copyright (c) 2011-2013 Digital Bazaar, Inc.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
