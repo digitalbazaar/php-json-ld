@@ -4,7 +4,7 @@
  *
  * @author Dave Longley
  *
- * Copyright (c) 2011-2012 Digital Bazaar, Inc. All rights reserved.
+ * Copyright (c) 2011-2013 Digital Bazaar, Inc. All rights reserved.
  */
 require_once('jsonld.php');
 
@@ -261,7 +261,12 @@ class TestRunner {
           'base' => 'http://json-ld.org/test-suite/tests/' . $test->input);
 
         try {
-          if(in_array('jld:NormalizeTest', $type)) {
+          if(in_array('jld:ApiErrorTest', $type)) {
+            echo "Skipping test \"{$test->name}\" of type: " .
+              json_encode($type) . $eol;
+            continue;
+          }
+          else if(in_array('jld:NormalizeTest', $type)) {
             $this->test($test->name);
             $input = read_test_json($test->input, $filepath);
             $test->expect = read_test_nquads($test->expect, $filepath);
@@ -280,6 +285,12 @@ class TestRunner {
             $test->context = read_test_json($test->context, $filepath);
             $test->expect = read_test_json($test->expect, $filepath);
             $result = jsonld_compact($input, $test->context, $options);
+          }
+          else if(in_array('jld:FlattenTest', $type)) {
+            $this->test($test->name);
+            $input = read_test_json($test->input, $filepath);
+            $test->expect = read_test_json($test->expect, $filepath);
+            $result = jsonld_flatten($input, null, $options);
           }
           else if(in_array('jld:FrameTest', $type)) {
             $this->test($test->name);

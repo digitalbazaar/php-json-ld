@@ -71,6 +71,23 @@ function jsonld_expand($input, $options=array()) {
 }
 
 /**
+ * Performs JSON-LD flattening.
+ *
+ * @param mixed $input the JSON-LD to flatten.
+ * @param mixed $ctx the context to use to compact the flattened output, or
+ *          null.
+ * @param [options] the options to use:
+ *          [base] the base IRI to use.
+ *          [resolver(url, callback(err, jsonCtx))] the URL resolver to use.
+ *
+ * @return mixed the flattened JSON-LD output.
+ */
+function jsonld_flatten($input, $ctx, $options=array()) {
+  $p = new JsonLdProcessor();
+  return $p->flatten($input, $ctx, $options);
+}
+
+/**
  * Performs JSON-LD framing.
  *
  * @param mixed $input the JSON-LD object to frame.
@@ -145,6 +162,14 @@ function jsonld_to_rdf($input, $options=array()) {
   return $p->toRDF($input, $options);
 }
 
+/** JSON-LD shared in-memory cache. */
+global $jsonld_cache;
+$jsonld_cache = new stdClass();
+
+/** The default active context cache. */
+// FIXME: turn on
+//$jsonld_cache->activeCtx = new ActiveContextCache();
+
 /** The default JSON-LD URL resolver. */
 global $jsonld_default_url_resolver;
 $jsonld_default_url_resolver = null;
@@ -186,11 +211,11 @@ function jsonld_resolve_url($url) {
 function jsonld_default_resolve_url($url) {
   // default JSON-LD GET implementation
   $opts = array('http' =>
-      array(
-          'method' => "GET",
-          'header' =>
-          "Accept: application/ld+json\r\n" .
-          "User-Agent: PaySwarm PHP Client/1.0\r\n"));
+    array(
+      'method' => "GET",
+      'header' =>
+      "Accept: application/ld+json\r\n" .
+      "User-Agent: PaySwarm PHP Client/1.0\r\n"));
   $stream = stream_context_create($opts);
   $result = @file_get_contents($url, false, $stream);
   if($result === false) {
@@ -230,67 +255,110 @@ function jsonld_unregister_rdf_parser($content_type) {
 }
 
 /**
- * Converts a relative path into an absolute URL.
+ * Parses a URL into its component parts.
  *
- * @param string $path the relative path.
- * @param string $url the absolute URL base.
+ * @param string $url the URL to parse.
  *
- * @return string the absolute URL for the given relative path.
+ * @return assoc the parsed URL.
  */
-function jsonld_to_absolute_url($path, $url) {
-  // validate path (it may already be an absolute URL)
-  if(filter_var($path, FILTER_VALIDATE_URL) === false) {
-    $url = parse_url($url);
-    $rval = "{$url['scheme']}://";
-
-    if(isset($url['user']) || isset($url['pass'])) {
-      $rval .= "{$url['user']}:{$url['pass']}@";
-    }
-
-    $rval .= $url['host'];
-    if(isset($url['port'])) {
-      $rval .= ":{$url['port']}";
-    }
-
-    $rval .= jsonld_prepend_base($url['path'], $path);
-    if(strrpos($rval, '?') === false && isset($url['query'])) {
-      $rval .= "?{$url['query']}";
-    }
-
-    if(strrpos($rval, '#') === false && isset($url['fragment'])) {
-      $rval .= "#{$url['fragment']}";
+function jsonld_parse_url($url) {
+  $rval = parse_url($url);
+  if(isset($rval['host'])) {
+    if(!isset($rval['path']) || $rval['path'] === '') {
+      $rval['path'] = '/';
     }
   }
-  else {
-    $rval = $path;
+  else if(!isset($rval['path'])) {
+    $rval['path'] = '';
   }
-
-  // validate result
-  if(filter_var($rval, FILTER_VALIDATE_URL) === false) {
-    throw new JsonLdException(
-      'Malformed URL.', 'jsonld.InvalidUrl', array('url' => $rval));
-  }
-
-  return $rval;
 }
 
 /**
- * Prepend a relative IRI to a base IRI.
+ * Prepends a base IRI to the given relative IRI.
  *
- * @param string $base the base IRI.
+ * @param mixed $base a string or the parsed base IRI.
  * @param string $iri the relative IRI.
+ *
+ * @return string the absolute IRI.
  */
 function jsonld_prepend_base($base, $iri) {
-  if($iri === '' || strpos($iri, '#') === 0) {
-    return "$base$iri";
+  if(is_string($base)) {
+    $base = jsonld_parse_url($base);
+  }
+  $authority = $base['host'];
+  $rel = jsonld_parse_url($iri);
+  print_r($rel);
+
+  // per RFC3986 normalize slashes and dots in path
+
+  // IRI contains authority
+  if(strpos($iri, '//') === 0) {
+    $path = substr($iri, 2);
+    $authority = substr($path, 0, strrpos($path, '/'));
+    $path = substr($path, strlen($authority));
+  }
+  // IRI represents an absolue path
+  else if(strpos($rel['path'], '/') === 0) {
+    $path = $rel['path'];
+  }
+  else {
+    $path = $base['path'];
+
+    // prepend last directory for base
+    if($rel['path'] !== '') {
+      $idx = strrpos($path, '/');
+      $idx = ($idx === false) ? 0 : $idx + 1;
+      $path = substr($path, 0, $idx) + $rel['path'];
+    }
   }
 
-  // prepend last directory for base
-  $idx = strrpos($base, '/');
-  if($idx === false) {
-    return $iri;
+  $segments = explode($path, '/');
+
+  // remove '.' and '' (do not remove trailing empty path)
+  $idx = 0;
+  $end = count($segments) - 1;
+  $filter = function($e) use ($idx, $end) {
+    $idx += 1;
+    return $e !== '.' && ($e !== '' || $idx === $end);
+  };
+  $segments = array_filter($segments, $filter);
+
+  // remove as many '..' as possible
+  for($i = 0; $i < count($segments);) {
+    $segment = $segments[$i];
+    if($segment === '..') {
+      // too many reverse dots
+      if($i === 0) {
+        $last = $segments[count($segments) - 1];
+        if($last !== '..') {
+          $segments = array($last);
+        }
+        else {
+          $segments = array();
+        }
+        break;
+      }
+
+      // remove '..' and previous segment
+      array_splice($segments, $i - 1, 2);
+      $i -= 1;
+    }
+    else {
+      $i += 1;
+    }
   }
-  return substr($base, 0, $idx + 1) . $iri;
+
+  $path = '/' . implode(',', $segments);
+
+  // add query and hash
+  if(isset($rel['query'])) {
+    $path .= '?' . $rel['query'];
+  }
+  if(isset($rel['hash'])) {
+    $path .= '#' . $rel['hash'];
+  }
+
+  return $base['scheme'] . "://$authority$path";
 }
 
 /**
@@ -326,7 +394,11 @@ class JsonLdProcessor {
    * @param mixed $input the JSON-LD object to compact.
    * @param mixed $ctx the context to compact with.
    * @param assoc $options the compaction options.
+   *          [base] the base IRI to use.
+   *          [skipExpansion] true to assume the input is expanded and skip
+   *            expansion, false not to, defaults to false.
    *          [activeCtx] true to also return the active context used.
+   *          [resolver(url)] the URL resolver to use.
    *
    * @return mixed the compacted JSON-LD output.
    */
@@ -338,24 +410,32 @@ class JsonLdProcessor {
 
     // set default options
     isset($options['base']) or $options['base'] = '';
+    isset($options['renameBlankNodes']) or $options['renameBlankNodes'] =
+      true;
     isset($options['strict']) or $options['strict'] = true;
     isset($options['optimize']) or $options['optimize'] = false;
     isset($options['graph']) or $options['graph'] = false;
+    isset($options['skipExpansion']) or $options['skipExpansion'] = false;
     isset($options['activeCtx']) or $options['activeCtx'] = false;
     isset($options['resolver']) or $options['resolver'] = 'jsonld_resolve_url';
 
-    // expand input
-    try {
-      $expanded = $this->expand($input, $options);
+    if($options['skipExpansion'] === true) {
+      $expanded = $input;
     }
-    catch(JsonLdException $e) {
-      throw new JsonLdException(
-        'Could not expand input before compaction.',
-        'jsonld.CompactError', null, $e);
+    else {
+      // expand input
+      try {
+        $expanded = $this->expand($input, $options);
+      }
+      catch(JsonLdException $e) {
+        throw new JsonLdException(
+          'Could not expand input before compaction.',
+          'jsonld.CompactError', null, $e);
+      }
     }
 
     // process context
-    $active_ctx = $this->_getInitialContext();
+    $active_ctx = $this->_getInitialContext($options);
     try {
       $active_ctx = $this->processContext($active_ctx, $ctx, $options);
     }
@@ -368,13 +448,15 @@ class JsonLdProcessor {
     // do compaction
     $compacted = $this->_compact($active_ctx, null, $expanded, $options);
 
-    // always use an array if graph options is on
-    if($options['graph'] === true) {
-      $compacted = self::arrayify($compacted);
-    }
-    // else if compacted is an array with 1 entry, remove array
-    else if(is_array($compacted) && count($compacted) === 1) {
+    // if compacted is an array with 1 entry, remove array unless
+    // graph option is set
+    if($options['graph'] !== true &&
+      is_array($compacted) && count($compacted) === 1) {
       $compacted = $compacted[0];
+    }
+    // always use array if graph option is on
+    else if($options['graph'] === true) {
+      $compacted = self::arrayify($compacted);
     }
 
     // follow @context key
@@ -426,13 +508,10 @@ class JsonLdProcessor {
     }
 
     if($options['activeCtx']) {
-      return array(
-        'compacted' => $compacted,
-        'activeCtx' => $active_ctx);
+      return array('compacted' => $compacted, 'activeCtx' => $active_ctx);
     }
-    else {
-      return $compacted;
-    }
+
+    return $compacted;
   }
 
   /**
@@ -441,6 +520,10 @@ class JsonLdProcessor {
    * @param mixed $input the JSON-LD object to expand.
    * @param assoc $options the options to use:
    *          [base] the base IRI to use.
+   *          [renameBlankNodes] true to rename blank nodes, false not to,
+   *            defaults to true.
+   *          [keepFreeFloatingNodes] true to keep free-floating nodes,
+   *            false not to, defaults to false.
    *          [resolver(url)] the URL resolver to use.
    *
    * @return array the expanded JSON-LD output.
@@ -448,6 +531,10 @@ class JsonLdProcessor {
   public function expand($input, $options) {
     // set default options
     isset($options['base']) or $options['base'] = '';
+    isset($options['renameBlankNodes']) or $options['renameBlankNodes'] =
+      true;
+    isset($options['keepFreeFloatingNodes']) or
+      $options['keepFreeFloatingNodes'] = false;
     isset($options['resolver']) or $options['resolver'] = 'jsonld_resolve_url';
 
     // resolve all @context URLs in the input
@@ -463,16 +550,67 @@ class JsonLdProcessor {
     }
 
     // do expansion
-    $ctx = $this->_getInitialContext();
-    $expanded = $this->_expand($ctx, null, $input, $options, false);
+    $active_ctx = $this->_getInitialContext($options);
+    $expanded = $this->_expand($active_ctx, null, $input, $options, false);
 
     // optimize away @graph with no other properties
     if(is_object($expanded) && property_exists($expanded, '@graph') &&
-      count(get_object_vars($expanded)) === 1) {
+      count(array_keys((array)$expanded)) === 1) {
       $expanded = $expanded->{'@graph'};
+    }
+    else if($expanded === null) {
+      $expanded = array();
     }
     // normalize to an array
     return self::arrayify($expanded);
+  }
+
+  /**
+   * Performs JSON-LD flattening.
+   *
+   * @param mixed $input the JSON-LD to flatten.
+   * @param ctx the context to use to compact the flattened output, or null.
+   * @param assoc $options the options to use:
+   *          [base] the base IRI to use.
+   *          [resolver(url)] the URL resolver to use.
+   *
+   * @return array the flattened output.
+   */
+  public function flatten($input, $ctx, $options) {
+    // set default options
+    isset($options['base']) or $options['base'] = '';
+    isset($options['resolver']) or $options['resolver'] = 'jsonld_resolve_url';
+
+    try {
+      // expand input
+      $expanded = $this->expand($input, $options);
+    }
+    catch(Exception $e) {
+      throw new JsonLdException(
+        'Could not expand input before flattening.',
+        'jsonld.FlattenError', null, $e);
+    }
+
+    // do flattening
+    $flattened = $this->_flatten($expanded);
+
+    if($ctx === null) {
+      return $flattened;
+    }
+
+    // compact result (force @graph option to true, skip expansion)
+    $options['graph'] = true;
+    $options['skipExpansion'] = true;
+    try {
+      $compacted = $this->compact($flattened, $ctx, $options);
+    }
+    catch(Exception $e) {
+      throw new JsonLdException(
+        'Could not compact flattened output.',
+        'jsonld.FlattenError', null, $e);
+    }
+
+    return $compacted;
   }
 
   /**
@@ -505,7 +643,7 @@ class JsonLdProcessor {
 
     try {
       // expand input
-      $_input = $this->expand($input, $options);
+      $expanded = $this->expand($input, $options);
     }
     catch(Exception $e) {
       throw new JsonLdException(
@@ -515,7 +653,9 @@ class JsonLdProcessor {
 
     try {
       // expand frame
-      $_frame = $this->expand($frame, $options);
+      $opts = self::copy($options);
+      $opts['keepFreeFloatingNodes'] = true;
+      $expanded_frame = $this->expand($frame, $opts);
     }
     catch(Exception $e) {
       throw new JsonLdException(
@@ -524,11 +664,12 @@ class JsonLdProcessor {
     }
 
     // do framing
-    $framed = $this->_frame($_input, $_frame, $options);
+    $framed = $this->_frame($expanded, $expanded_frame, $options);
 
     try {
       // compact result (force @graph option to true)
       $options['graph'] = true;
+      $options['skipExpansion'] = true;
       $options['activeCtx'] = true;
       $result = $this->compact($framed, $ctx, $options);
     }
@@ -539,12 +680,13 @@ class JsonLdProcessor {
     }
 
     $compacted = $result['compacted'];
-    $ctx = $result['activeCtx'];
+    $active_ctx = $result['activeCtx'];
 
     // get graph alias
-    $graph = $this->_compactIri($ctx, '@graph');
+    $graph = $this->_compactIri($active_ctx, '@graph');
     // remove @preserve from results
-    $compacted->{$graph} = $this->_removePreserve($ctx, $compacted->{$graph});
+    $compacted->{$graph} = $this->_removePreserve(
+      $active_ctx, $compacted->{$graph});
     return $compacted;
   }
 
@@ -685,19 +827,23 @@ class JsonLdProcessor {
    * @param stdClass $active_ctx the current active context.
    * @param mixed $local_ctx the local context to process.
    * @param assoc $options the options to use:
+   *          [renameBlankNodes] true to rename blank nodes, false not to,
+   *            defaults to true.
    *          [resolver(url)] the URL resolver to use.
    *
    * @return stdClass the new active context.
    */
   public function processContext($active_ctx, $local_ctx, $options) {
-    // return initial context early for null context
-    if($local_ctx === null) {
-      return $this->_getInitialContext();
-    }
-
     // set default options
     isset($options['base']) or $options['base'] = '';
+    isset($options['renameBlankNodes']) or $options['renameBlankNodes'] =
+      true;
     isset($options['resolver']) or $options['resolver'] = 'jsonld_resolve_url';
+
+    // return initial context early for null context
+    if($local_ctx === null) {
+      return $this->_getInitialContext($options);
+    }
 
     // resolve URLs in local_ctx
     $ctx = self::copy($local_ctx);
@@ -884,8 +1030,10 @@ class JsonLdProcessor {
    * considered equal if:
    *
    * 1. They are both primitives of the same type and value.
-   * 2. They are both @values with the same @value, @type, and @language, OR
-   * 3. They both have @ids they are the same.
+   * 2. They are both @values with the same @value, @type, @language,
+   *   and @index, OR
+   * 3. They are both @lists with the same @list and @index, OR
+   * 4. They both have @ids they are the same.
    *
    * @param mixed $v1 the first value.
    * @param mixed $v2 the second value.
@@ -899,17 +1047,33 @@ class JsonLdProcessor {
     }
 
     // 2. equal @values
-    if(self::_isValue($v1) && self::_isValue($v2) &&
-      $v1->{'@value'} === $v2->{'@value'} &&
-      property_exists($v1, '@type') === property_exists($v2, '@type') &&
-      property_exists($v1, '@language') === property_exists($v2, '@language') &&
-      (!property_exists($v1, '@type') || $v1->{'@type'} === $v2->{'@type'}) &&
-      (!property_exists($v1, '@language') ||
-        $v2->{'@language'} === $v2->{'@language'})) {
+    if(self::_isValue($v1) || self::_isValue($v2)) {
+      return (
+        self::_compareKeyValues($v1, $v2, '@value') &&
+        self::_compareKeyValues($v1, $v2, '@type') &&
+        self::_compareKeyValues($v1, $v2, '@language') &&
+        self::_compareKeyValues($v1, $v2, '@index'));
+    }
+
+    // 3. equal @lists
+    if(self::_isList($v1) && self::_isList($v2)) {
+      if(!self::_compareKeyValues($v1, $v2, '@index')) {
+        return false;
+      }
+      $list1 = $v1->{'@list'};
+      $list2 = $v2->{'@list'};
+      if(count($list1) !== count($list2)) {
+        return false;
+      }
+      for($i = 0; $i < count($list1); ++$i) {
+        if(!self::compareValues($list1[$i], $list2[$i])) {
+          return false;
+        }
+      }
       return true;
     }
 
-    // 3. equal @ids
+    // 4. equal @ids
     if(is_object($v1) && property_exists($v1, '@id') &&
       is_object($v2) && property_exists($v2, '@id')) {
       return $v1->{'@id'} === $v2->{'@id'};
@@ -945,6 +1109,9 @@ class JsonLdProcessor {
     // get specific entry information
     if(property_exists($ctx->mappings, $key)) {
       $entry = $ctx->mappings->{$key};
+      if($entry === null) {
+        return null;
+      }
 
       // return whole entry
       if($type === null) {
@@ -1064,7 +1231,7 @@ class JsonLdProcessor {
       }
 
       // add statement
-      JsonLdProcessor::_appendUniqueRdfStatement($statements, $s);
+      self::_appendUniqueRdfStatement($statements, $s);
     }
 
     return $statements;
@@ -1124,7 +1291,7 @@ class JsonLdProcessor {
           $o->nominalValue);
       $quad .= '"' . $escaped . '"';
       if(property_exists($o, 'datatype') &&
-        $o->datatype->nominalValue !== JsonLdProcessor::XSD_STRING) {
+        $o->datatype->nominalValue !== self::XSD_STRING) {
         $quad .= "^^<{$o->datatype->nominalValue}>";
       }
       else if(property_exists($o, 'language')) {
@@ -1213,29 +1380,33 @@ class JsonLdProcessor {
    * Recursively compacts an element using the given active context. All values
    * must be in expanded form before this method is called.
    *
-   * @param stdClass $ctx the active context to use.
-   * @param mixed $property the property that points to the element, null for
-   *          none.
+   * @param stdClass $active_ctx the active context to use.
+   * @param mixed $active_property the compacted property with the element
+   *          to compact, null for none.
    * @param mixed $element the element to compact.
-   * @param array $options the compaction options.
+   * @param assoc $options the compaction options.
    *
    * @return mixed the compacted value.
    */
-  protected function _compact($ctx, $property, $element, $options) {
+  protected function _compact(
+    $active_ctx, $active_property, $element, $options) {
     // recursively compact array
     if(is_array($element)) {
       $rval = array();
       foreach($element as $e) {
-        $e = $this->_compact($ctx, $property, $e, $options);
+        // compact, dropping any null values
+        $compacted = $this->_compact(
+          $active_ctx, $active_property, $e, $options);
         // drop null values
-        if($e !== null) {
-          $rval[] = $e;
+        if($compacted !== null) {
+          $rval[] = $compacted;
         }
       }
       if(count($rval) === 1) {
         // use single element if no container is specified
-        $container = self::getContextValue($ctx, $property, '@container');
-        if($container !== '@list' && $container !== '@set') {
+        $container = self::getContextValue(
+          $active_ctx, $active_property, '@container');
+        if($container === null) {
           $rval = $rval[0];
         }
       }
@@ -1244,143 +1415,184 @@ class JsonLdProcessor {
 
     // recursively compact object
     if(is_object($element)) {
-      // element is a @value
-      if(self::_isValue($element)) {
-        // if @value is the only key
-        if(count(get_object_vars($element)) === 1) {
-          // if there is no default language or @value is not a string,
-          // return value of @value
-          if(!property_exists($ctx, '@language') ||
-            !is_string($element->{'@value'})) {
-            return $element->{'@value'};
-          }
-          // return full element, alias @value
-          $rval = new stdClass();
-          $rval->{$this->_compactIri($ctx, '@value')} = $element->{'@value'};
-          return $rval;
-        }
+      // do value compaction on @values and subject references
+      if(self::_isValue($element) || self::_isSubjectReference($element)) {
+        return $this->_compactValue($active_ctx, $active_property, $element);
+      }
 
-        // get type and language context rules
-        $type = self::getContextValue($ctx, $property, '@type');
-        $language = self::getContextValue($ctx, $property, '@language');
-
-        // matching @type specified in context, compact element
-        if($type !== null &&
-          property_exists($element, '@type') && $element->{'@type'} === $type) {
-          return $element->{'@value'};
-        }
-        // matching @language specified in context, compact element
-        else if($language !== null &&
-          property_exists($element, '@language') &&
-          $element->{'@language'} === $language) {
-          return $element->{'@value'};
+      // shallow copy element and arrays so keys and values can be removed
+      // during property generator compaction
+      $shallow = new stdClass();
+      foreach($element as $expanded_property => $expanded_value) {
+        if(is_array($element->{$expanded_property})) {
+          $shallow->{$expanded_property} = $element->{$expanded_property};
         }
         else {
-          $rval = new stdClass();
-          // compact @type IRI
-          if(property_exists($element, '@type')) {
-            $rval->{$this->_compactIri($ctx, '@type')} =
-              $this->_compactIri($ctx, $element->{'@type'});
-          }
-          // alias @language
-          else if(property_exists($element, '@language')) {
-            $rval->{$this->_compactIri($ctx, '@language')} =
-              $element->{'@language'};
-          }
-          $rval->{$this->_compactIri($ctx, '@value')} = $element->{'@value'};
-          return $rval;
+          $shallow->{$expanded_property} = $element->{$expanded_property};
         }
       }
+      $element = $shallow;
 
-      // compact subject references
-      if(self::_isSubjectReference($element)) {
-        $type = self::getContextValue($ctx, $property, '@type');
-        if($type === '@id' || $property === '@graph') {
-          return $this->_compactIri($ctx, $element->{'@id'});
-        }
-      }
-
-      // recursively process element keys
+      // process element keys in order
+      $keys = array_keys((array)$element);
+      sort($keys);
       $rval = new stdClass();
-      foreach($element as $key => $value) {
-        // compact @id and @type(s)
-        if($key === '@id' || $key === '@type') {
-          // compact single @id
-          if(is_string($value)) {
-            $value = $this->_compactIri($ctx, $value);
-          }
-          // value must be a @type array
-          else {
-            $types = array();
-            foreach($value as $v) {
-              $types[] = $this->_compactIri($ctx, $v);
-            }
-            $value = $types;
-          }
-
-          // compact property and add value
-          $prop = $this->_compactIri($ctx, $key);
-          $isArray = (is_array($value) && count($value) === 0);
-          self::addValue(
-            $rval, $prop, $value, array('propertyIsArray' => $isArray));
+      foreach($keys as $expanded_property) {
+        // skip key if removed during property generator duplicate handling
+        if(!property_exists($element, $expanded_property)) {
           continue;
         }
 
-        // Note: value must be an array due to expansion algorithm.
+        $expanded_value = $element->{$expanded_property};
+
+        // compact @id and @type(s)
+        if($expanded_property === '@id' || $expanded_property === '@type') {
+          // compact single @id
+          if(is_string($expanded_value)) {
+            $compacted_value = $this->_compactIri(
+              $active_ctx, $expanded_value, null, array(
+                'base' => true, 'vocab' => ($expanded_property === '@type')));
+          }
+          // expanded value must be a @type array
+          else {
+            $compacted_value = array();
+            foreach($expanded_value as $ev) {
+              $compacted_value[] = $this->_compactIri(
+                $active_ctx, $ev, null, array('base' => true, 'vocab' => true));
+            }
+          }
+
+          // use keyword alias and add value
+          $alias = $this->_compactIri($active_ctx, $expanded_property);
+          $is_array = (is_array($compacted_value) &&
+            count($expanded_value) === 0);
+          self::addValue(
+            $rval, $alias, $compacted_value,
+            array('propertyIsArray' => $is_array));
+          continue;
+        }
+
+        // handle @index property
+        if($expanded_property === '@index') {
+          // drop @index if inside an @index container
+          $container = self::getContextValue(
+            $active_ctx, $active_property, '@container');
+          if($container === '@index') {
+            continue;
+          }
+
+          // use keyword alias and add value
+          $alias = $this->_compactIri($active_ctx, $expanded_property);
+          self::addValue($rval, $alias, $expanded_value);
+          continue;
+        }
+
+        // Note: expanded value must be an array due to expansion algorithm.
 
         // preserve empty arrays
-        if(count($value) === 0) {
-          $prop = $this->_compactIri($ctx, $key);
+        if(count($expanded_value) === 0) {
+          $active_property = $this->_compactIri(
+            $active_ctx, $expanded_property, null, array('vocab' => true),
+            $element);
           self::addValue(
-            $rval, $prop, array(), array('propertyIsArray' => true));
+            $rval, $active_property, array(), array('propertyIsArray' => true));
         }
 
         // recusively process array values
-        foreach($value as $v) {
-          $is_list = self::_isList($v);
+        foreach($expanded_value as $expanded_item) {
+          // compact property and get container type
+          $active_property = $this->_compactIri(
+            $active_ctx, $expanded_property, $expanded_item,
+            array('vocab' => true), $element);
+          $container = self::getContextValue(
+            $active_ctx, $active_property, '@container');
 
-          // compact property
-          $prop = $this->_compactIri($ctx, $key, $v);
-
-          // remove @list for recursion (will be re-added if necessary)
-          if($is_list) {
-            $v = $v->{'@list'};
+          // remove any duplicates that were (presumably) generated by a
+          // property generator
+          if(property_exists($active_ctx->mappings, $active_property)) {
+            $mapping = $active_ctx->mappings->{$active_property};
+            if($mapping && $mapping->propertyGenerator) {
+              $this->_findAndRemovePropertyGeneratorDuplicates(
+                $active_ctx, $element, $expanded_property, $expanded_item,
+                $active_property);
+            }
           }
 
-          // recursively compact value
-          $v = $this->_compact($ctx, $prop, $v, $options);
+          // get @list value if appropriate
+          $is_list = self::_isList($expanded_item);
+          $list = null;
+          if($is_list) {
+            $list = $expanded_item->{'@list'};
+          }
 
-          // get container type for property
-          $container = self::getContextValue($ctx, $prop, '@container');
+          // recursively compact expanded item
+          $compacted_item = $this->_compact(
+            $active_ctx, $active_property, $is_list ? $list : $expanded_item,
+            $options);
 
           // handle @list
-          if($is_list && $container !== '@list') {
-            // handle messy @list compaction
-            if(property_exists($rval, $prop) && $options['strict']) {
+          if($is_list) {
+            // ensure $list value is an array
+            $compacted_item = self::arrayify($compacted_item);
+
+            if($container !== '@list') {
+              // wrap using @list alias
+              $compacted_item = (object)array(
+                $this->_compactIri($active_ctx, '@list'), $compacted_item);
+
+              // include @index from expanded @list, if any
+              if(property_exists($expanded_item, '@index')) {
+                $compacted_item->{$this->_compactIri($active_ctx, '@index')} =
+                  $expanded_item->{'@index'};
+              }
+            }
+            // can't use @list container for more than 1 list
+            else if(property_exists($rval, $active_property)) {
               throw new JsonLdException(
-                'JSON-LD compact error; property has a "@list" @container ' +
-                'rule but there is more than a single @list that matches ' +
-                'the compacted term in the document. Compaction might mix ' +
+                'JSON-LD compact error; property has a "@list" @container ' .
+                'rule but there is more than a single @list that matches ' .
+                'the compacted term in the document. Compaction might mix ' .
                 'unwanted items into the list.',
                 'jsonld.SyntaxError');
             }
-            // reintroduce @list keyword
-            $kwlist = $this->_compactIri($ctx, '@list');
-            $val = new stdClass();
-            $val->{$kwlist} = $v;
-            $v = $val;
           }
 
-          // if @container is @set or @list or value is an empty array, use
-          // an array when adding value
-          $is_array = ($container === '@set' || $container === '@list' ||
-            (is_array($v) && count($v) === 0));
+          // handle language and index maps
+          if($container === '@language' || $container === '@index') {
+            // get or create the map object
+            if(property_exists($rval, $active_property)) {
+              $map_object = $rval->{$active_property};
+            }
+            else {
+              $rval->{$active_property} = $map_object = new stdClass();
+            }
 
-          // add compact value
-          self::addValue(
-            $rval, $prop, $v, array('propertyIsArray' => $is_array));
+            // if container is a language map, simplify compacted value to
+            // a simple string
+            if($container === '@language' && self::_isValue($compacted_item)) {
+              $compacted_item = $compacted_item->{'@value'};
+            }
+
+            // add compact value to map object using key from expanded value
+            // based on the container type
+            self::addValue(
+              $map_object, $expanded_item->{$container}, $compacted_item);
+          }
+          else {
+            // use an array if: @container is @set or @list , value is an empty
+            // array, or key is @graph
+            $is_array = ($container === '@set' || $container === '@list' ||
+              (is_array($compacted_item) && count($compacted_item) === 0) ||
+              $expanded_property === '@graph');
+
+            // add compact value
+            self::addValue(
+              $rval, $active_property, $compacted_item,
+              array('propertyIsArray' => $is_array));
+          }
         }
       }
+
       return $rval;
     }
 
@@ -1393,23 +1605,29 @@ class JsonLdProcessor {
    * the element will be removed. All context URLs must have been resolved
    * before calling this method.
    *
-   * @param stdClass $ctx the context to use.
-   * @param mixed $property the property for the element, null for none.
+   * @param stdClass $active_ctx the active context to use.
+   * @param mixed $active_property the property for the element, null for none.
    * @param mixed $element the element to expand.
-   * @param array $options the expansion options.
-   * @param bool $propertyIsList true if the property is a list, false if not.
+   * @param assoc $options the expansion options.
+   * @param bool $inside_list true if the property is a list, false if not.
    *
    * @return mixed the expanded value.
    */
   protected function _expand(
-    $ctx, $property, $element, $options, $propertyIsList) {
+    $active_ctx, $active_property, $element, $options, $inside_list) {
+    // nothing to expand
+    if($element === null) {
+      return $element;
+    }
+
     // recursively expand array
     if(is_array($element)) {
       $rval = array();
       foreach($element as $e) {
         // expand element
-        $e = $this->_expand($ctx, $property, $e, $options, $propertyIsList);
-        if(is_array($e) && $propertyIsList) {
+        $e = $this->_expand(
+          $active_ctx, $active_property, $e, $options, $inside_list);
+        if($inside_list && (is_array($e) || self::_isList($e))) {
           // lists of lists are illegal
           throw new JsonLdException(
             'Invalid JSON-LD syntax; lists of lists are not permitted.',
@@ -1417,179 +1635,342 @@ class JsonLdProcessor {
         }
         // drop null values
         else if($e !== null) {
-          $rval[] = $e;
+          if(is_array($e)) {
+            $rval = array_merge($rval, $e);
+          }
+          else {
+            $rval[] = $e;
+          }
         }
       }
       return $rval;
     }
 
-    // expand non-object element according to value expansion rules
-    if(!is_object($element)) {
-      return $this->_expandValue($ctx, $property, $element, $options['base']);
-    }
-
-    // Note: element must be an object, recursively expand it
-
-    // if element has a context, process it
-    if(property_exists($element, '@context')) {
-      $ctx = $this->_processContext($ctx, $element->{'@context'}, $options);
-      unset($element->{'@context'});
-    }
-
-    $rval = new stdClass();
-    foreach($element as $key => $value) {
-      // expand property
-      $prop = $this->_expandTerm($ctx, $key);
-
-      // drop non-absolute IRI keys that aren't keywords
-      if(!self::_isAbsoluteIri($prop) && !self::_isKeyword($prop, $ctx)) {
-        continue;
+    // recursively expand object
+    if(is_object($element)) {
+      // if element has a context, process it
+      if(property_exists($element, '@context')) {
+        $active_ctx = $this->_processContext($active_ctx, $element->{'@context'}, $options);
+        unset($element->{'@context'});
       }
 
-      // if value is null and property is not @value, continue
-      $value = $element->{$key};
-      if($value === null && $prop !== '@value') {
-        continue;
-      }
+      // expand the active property
+      $expanded_active_property = $this->_expandIri(
+        $active_ctx, $active_property);
 
-      // syntax error if @id is not a string
-      if($prop === '@id' && !is_string($value)) {
-        throw new JsonLdException(
-          'Invalid JSON-LD syntax; "@id" value must a string.',
-          'jsonld.SyntaxError', array('value' => $value));
-      }
+      $rval = new stdClass();
+      $keys = array_keys((array)$element);
+      sort($keys);
+      foreach($keys as $key) {
+        $value = $element->{$key};
 
-      // validate @type value
-      if($prop === '@type') {
-        $this->_validateTypeValue($value);
-      }
+        // expand key using property generator
+        if(property_exists($active_ctx->mappings, $key)) {
+          $mapping = $active_ctx->mappings->{$key};
+        }
+        else {
+          $mapping = null;
+        }
 
-      // @graph must be an array or an object
-      if($prop === '@graph' && !(is_object($value) || is_array($value))) {
-        throw new JsonLdException(
-          'Invalid JSON-LD syntax; "@value" value must not be an ' +
-          'object or an array.',
-          'jsonld.SyntaxError', array('value' => $value));
-      }
+        if($mapping && $mapping->propertyGenerator) {
+          $expanded_property = $mapping->{'@id'};
+        }
+        // expand key to IRI
+        else {
+          $expanded_property = $this->_expandIri(
+            $active_ctx, $key, array('vocab' => true));
+        }
 
-      // @value must not be an object or an array
-      if($prop === '@value' && (is_object($value) || is_array($value))) {
-        throw new JsonLdException(
-          'Invalid JSON-LD syntax; "@value" value must not be an ' +
-          'object or an array.',
-          'jsonld.SyntaxError', array('value' => $value));
-      }
+        // drop non-absolute IRI keys that aren't keywords
+        if($expanded_property === null ||
+          !(is_array($expanded_property) ||
+          self::_isAbsoluteIri($expanded_property) ||
+          self::_isKeyword($expanded_property))) {
+          continue;
+        }
 
-      // @language must be a string
-      if($prop === '@language' && !is_string($value)) {
-        throw new JsonLdException(
-          'Invalid JSON-LD syntax; "@language" value must not be a string.',
-          'jsonld.SyntaxError', array('value' => $value));
-      }
-
-      // recurse into @list or @set keeping the active property
-      $is_list = ($prop === '@list');
-      if($is_list || $prop === '@set') {
-        $value = $this->_expand($ctx, $property, $value, $options, $is_list);
-        if($is_list && self::_isList($value)) {
+        // syntax error if @id is not a string
+        if($expanded_property === '@id' && !is_string($value)) {
           throw new JsonLdException(
-            'Invalid JSON-LD syntax; lists of lists are not permitted.',
-            'jsonld.SyntaxError');
+              'Invalid JSON-LD syntax; "@id" value must a string.',
+              'jsonld.SyntaxError', array('value' => $value));
         }
-      }
-      else {
-        // update active property and recursively expand value
-        $property = $key;
-        $value = $this->_expand($ctx, $property, $value, $options, false);
-      }
 
-      // drop null values if property is not @value (dropped below)
-      if($value !== null || $prop === '@value') {
-        // convert value to @list if container specifies it
-        if($prop !== '@list' && !self::_isList($value)) {
-          $container = self::getContextValue($ctx, $property, '@container');
-          if($container === '@list') {
-            // ensure value is an array
-            $value = (object)array('@list' => self::arrayify($value));
+        // validate @type value
+        if($expanded_property === '@type') {
+          $this->_validateTypeValue($value);
+        }
+
+        // @graph must be an array or an object
+        if($expanded_property === '@graph' &&
+          !(is_object($value) || is_array($value))) {
+          throw new JsonLdException(
+            'Invalid JSON-LD syntax; "@value" value must not be an ' .
+            'object or an array.',
+            'jsonld.SyntaxError', array('value' => $value));
+        }
+
+        // @value must not be an object or an array
+        if($expanded_property === '@value' &&
+          (is_object($value) || is_array($value))) {
+          throw new JsonLdException(
+            'Invalid JSON-LD syntax; "@value" value must not be an ' .
+            'object or an array.',
+            'jsonld.SyntaxError', array('value' => $value));
+        }
+
+        // @language must be a string
+        if($expanded_property === '@language' && !is_string($value)) {
+          throw new JsonLdException(
+            'Invalid JSON-LD syntax; "@language" value must not be a string.',
+            'jsonld.SyntaxError', array('value' => $value));
+          // ensure language value is lowercase
+          $value = strtolower($value);
+        }
+
+        // preserve @index
+        if($expanded_property === '@index') {
+          if(!is_string($value)) {
+            throw new JsonLdException(
+              'Invalid JSON-LD syntax; "@index" value must be a string.',
+              'jsonld.SyntaxError', array('value' => $value));
           }
         }
 
-        // optimize away @id for @type
-        if($prop === '@type') {
-          if(self::_isSubjectReference($value)) {
-            $value = $value->{'@id'};
-          }
-          else if(is_array($value)) {
-            $val = array();
-            foreach($value as $v) {
-              if(self::_isSubjectReference($v)) {
-                $val[] = $v->{'@id'};
-              }
-              else {
-                $val[] = $v;
+        $container = self::getContextValue($active_ctx, $key, '@container');
+
+        // handle language map container (skip if value is not an object)
+        if($container === '@language' && is_object($value)) {
+          $expanded_value = $this->_expandLanguageMap($value);
+        }
+        // handle index container (skip if value is not an object)
+        else if($container === '@index' && is_object($value)) {
+          $expand_index_map = function($active_property) use (
+            $active_ctx, $active_property, $options, $value) {
+            $rval = array();
+            $keys = array_keys((array)$value);
+            sort($keys);
+            foreach($keys as $key) {
+              $val = $value->{$key};
+              $val = self::arrayify($val);
+              $val = $this->_expand(
+                $active_ctx, $active_property, $val, $options, false);
+              foreach($val as $item) {
+                if(!property_exists($item, '@index')) {
+                  $item->{'@index'} = $key;
+                }
+                $rval[] = $item;
               }
             }
-            $value = $val;
+            return $rval;
+          };
+          $expanded_value = $expand_index_map($key);
+        }
+        else {
+          // recurse into @list or @set keeping the active property
+          $is_list = ($expanded_property === '@list');
+          if($is_list || $expanded_property === '@set') {
+            $next_active_property = $active_property;
+            if($is_list && $expanded_active_property === '@graph') {
+              $next_active_property = null;
+            }
+            $expanded_value = $this->_expand(
+              $active_ctx, $active_property, $value, $options, $is_list);
+            if($is_list && self::_isList($expanded_value)) {
+              throw new JsonLdException(
+                'Invalid JSON-LD syntax; lists of lists are not permitted.',
+                'jsonld.SyntaxError');
+            }
+          }
+          else {
+            // recursively expand value with key as new active property
+            $expanded_value = $this->_expand(
+              $active_ctx, $key, $value, $options, false);
           }
         }
 
-        // add value, use an array if not @id, @type, @value, or @language
-        $use_array = !($prop === '@id' || $prop === '@type' ||
-          $prop === '@value' || $prop === '@language');
-        self::addValue(
-          $rval, $prop, $value, array('propertyIsArray' => $use_array));
-      }
-    }
+        // drop null values if property is not @value
+        if($expanded_value === null && $expanded_property !== '@value') {
+          continue;
+        }
 
-    // get property count on expanded output
-    $count = count(get_object_vars($rval));
+        // convert expanded value to @list if container specifies it
+        if($expanded_property !== '@list' && !self::_isList($expanded_value) &&
+          $container === '@list') {
+          // ensure expanded value is an array
+          $expanded_value = (object)array(
+            '@list' => self::arrayify($expanded_value));
+        }
 
-    // @value must only have @language or @type
-    if(property_exists($rval, '@value')) {
-      if(($count === 2 && !property_exists($rval, '@type') &&
-        !property_exists($rval, '@language')) ||
-        $count > 2) {
-        throw new JsonLdException(
-          'Invalid JSON-LD syntax; an element containing "@value" must have ' +
-          'at most one other property which can be "@type" or "@language".',
-          'jsonld.SyntaxError', array('element' => $rval));
+        // add copy of value for each property from property generator
+        if(is_array($expanded_property)) {
+          $this->_labelBlankNodes($active_ctx->namer, $expanded_value);
+          foreach($expanded_property as $iri) {
+            self::addValue(
+              $rval, $iri, self::copy($expanded_value),
+              array('propertyIsArray' => true));
+          }
+        }
+        // add value for property
+        else {
+          // use an array except for certain keywords
+          $use_array = (!in_array(
+            $expanded_property, array(
+              '@index', '@id', '@type', '@value', '@language')));
+          self::addValue(
+            $rval, $expanded_property, $expanded_value,
+            array('propertyIsArray' => $use_array));
+        }
       }
-      // value @type must be a string
-      if(property_exists($rval, '@type') && !is_string($rval->{'@type'})) {
-        throw new JsonLdException(
-          'Invalid JSON-LD syntax; the "@type" value of an element ' +
-          'containing "@value" must be a string.',
-          'jsonld.SyntaxError', array('element' => $rval));
+
+      // get property count on expanded output
+      $keys = array_keys((array)$rval);
+      $count = count($keys);
+
+      // @value must only have @language or @type
+      if(property_exists($rval, '@value')) {
+        // @value must only have @language or @type
+        if(property_exists($rval, '@type') &&
+          property_exists($rval, '@language')) {
+          throw new JsonLdException(
+            'Invalid JSON-LD syntax; an element containing "@value" may not ' .
+            'contain both "@type" and "@language".',
+            'jsonld.SyntaxError', array('element' => $rval));
+        }
+        $valid_count = $count - 1;
+        if(property_exists($rval, '@type')) {
+          $valid_count -= 1;
+        }
+        if(property_exists($rval, '@index')) {
+          $valid_count -= 1;
+        }
+        if(property_exists($rval, '@language')) {
+          $valid_count -= 1;
+        }
+        if($valid_count !== 0) {
+          throw new JsonLdException(
+            'Invalid JSON-LD syntax; an element containing "@value" may only ' .
+            'have an "@index" property and at most one other property ' .
+            'which can be "@type" or "@language".',
+            'jsonld.SyntaxError', array('element' => $rval));
+        }
+        // drop null @values
+        if($rval->{'@value'} === null) {
+          $rval = null;
+        }
+        // drop @language if @value isn't a string
+        else if(property_exists($rval, '@language') &&
+          !is_string($rval->{'@value'})) {
+          unset($rval->{'@language'});
+        }
       }
-      // drop null @values
-      else if($rval->{'@value'} === null) {
+      // convert @type to an array
+      else if(property_exists($rval, '@type') && !is_array($rval->{'@type'})) {
+        $rval->{'@type'} = array($rval->{'@type'});
+      }
+      // handle @set and @list
+      else if(property_exists($rval, '@set') ||
+        property_exists($rval, '@list')) {
+        if($count > 1 && ($count !== 2 && property_exists($rval, '@index'))) {
+          throw new JsonLdException(
+            'Invalid JSON-LD syntax; if an element has the property "@set" ' .
+            'or "@list", then it can have at most one other property that is ' .
+            '"@index".',
+            'jsonld.SyntaxError', array('element' => $rval));
+        }
+        // optimize away @set
+        if(property_exists($rval, '@set')) {
+          $rval = $rval->{'@set'};
+          $keys = array_keys((array)$rval);
+          $count = count($keys);
+        }
+      }
+      // drop objects with only @language
+      else if($count === 1 && property_exists($rval, '@language')) {
         $rval = null;
       }
-    }
-    // convert @type to an array
-    else if(property_exists($rval, '@type') && !is_array($rval->{'@type'})) {
-      $rval->{'@type'} = array($rval->{'@type'});
-    }
-    // handle @set and @list
-    else if(property_exists($rval, '@set') ||
-      property_exists($rval, '@list')) {
-      if($count !== 1) {
-        throw new JsonLdException(
-          'Invalid JSON-LD syntax; if an element has the property "@set" ' +
-          'or "@list", then it must be its only property.',
-          'jsonld.SyntaxError', array('element' => $rval));
+
+      // drop certain top-level objects that do not occur in lists
+      if(is_object($rval) &&
+        !$options['keepFreeFloatingNodes'] && !$inside_list &&
+        ($active_property === null || $expanded_active_property === '@graph')) {
+        // drop empty object or top-level @value
+        if($count === 0 || property_exists($rval, '@value')) {
+          $rval = null;
+        }
+        else {
+          // drop subjects that generate no triples
+          $has_triples = false;
+          $ignore = array('@graph', '@type', '@list');
+          foreach($keys as $key) {
+            if(!self::_isKeyword($key) || in_array($key, $ignore)) {
+              $has_triples = true;
+              break;
+            }
+          }
+          if(!$has_triples) {
+            $rval = null;
+          }
+        }
       }
-      // optimize away @set
-      if(property_exists($rval, '@set')) {
-        $rval = $rval->{'@set'};
-      }
-    }
-    // drop objects with only @language
-    else if(property_exists($rval, '@language') && $count === 1) {
-      $rval = null;
+
+      return $rval;
     }
 
-    return $rval;
+    // drop top-level scalars that are not in lists
+    if(!$inside_list &&
+      ($active_property === null ||
+      $this->_expandIri($active_ctx, $active_property) === '@graph')) {
+      return null;
+    }
+
+    // expand element according to value expansion rules
+    return $this->_expandValue($active_ctx, $active_property, $element);
+  }
+
+  /**
+   * Performs JSON-LD flattening.
+   *
+   * @param array $input the expanded JSON-LD to flatten.
+   *
+   * @return array the flattened output.
+   */
+  protected function _flatten($input) {
+    // produce a map of all subjects and name each bnode
+    $namer = new UniqueNamer('_:t');
+    $graphs = (object)array('@default' => new stdClass());
+    $this->_createNodeMap($input, $graphs, '@default', $namer);
+
+    // add all non-default graphs to default graph
+    $default_graph = $graphs->{'@default'};
+    foreach($graphs as $graph_name => $node_map) {
+      if($graph_name === '@default') {
+        continue;
+      }
+      if(!property_exists($default_graph, $graph_name)) {
+        $default_graph->{$graph_name} = (object)array(
+          '@id' => $graph_name, '@graph' => array());
+      }
+      $subject = $default_graph->{$graph_name};
+      if(!property_exists($subject, '@graph')) {
+        $subject->{'@graph'} = array();
+      }
+      $nodeMap = $graphs->{$graph_name};
+      $ids = array_keys((array)$node_map);
+      sort($ids);
+      foreach($ids as $id) {
+        $subject->{'@graph'}[] = $node_map->{$id};
+      }
+    }
+
+    // produce flattened output
+    $flattened = array();
+    $keys = array_keys((array)$default_graph);
+    sort($keys);
+    foreach($keys as $key) {
+      $flattened[] = $default_graph->{$key};
+    }
+    return $flattened;
   }
 
   /**
@@ -1597,7 +1978,7 @@ class JsonLdProcessor {
    *
    * @param array $input the expanded JSON-LD to frame.
    * @param array $frame the expanded JSON-LD frame to use.
-   * @param array $options the framing options.
+   * @param assoc $options the framing options.
    *
    * @return array the framed output.
    */
@@ -1630,7 +2011,7 @@ class JsonLdProcessor {
    * @param array $input the expanded JSON-LD object to normalize.
    * @param assoc $options the normalization options.
    *
-   * @return the normalized output.
+   * @return mixed the normalized output.
    */
   protected function _normalize($input, $options) {
     // map bnodes to RDF statements
@@ -1933,128 +2314,7 @@ class JsonLdProcessor {
    */
   protected function _toRDF(
     $element, $namer, $subject, $property, $graph, &$statements) {
-    if(is_object($element)) {
-      // convert @value to object
-      if(self::_isValue($element)) {
-        $value = $element->{'@value'};
-        $datatype = (property_exists($element, '@type') ?
-          $element->{'@type'} : null);
-        if(is_bool($value) || is_double($value) || is_integer($value)) {
-          // convert to XSD datatype
-          if(is_bool($value)) {
-            $value = ($value ? 'true' : 'false');
-            $datatype or $datatype = self::XSD_BOOLEAN;
-          }
-          else if(is_double($value)) {
-            // canonical double representation
-            $value = preg_replace('/(\d)0*E\+?/', '$1E',
-              sprintf('%1.15E', $value));
-            $datatype or $datatype = self::XSD_DOUBLE;
-          }
-          else {
-            $value = strval($value);
-            $datatype or $datatype = self::XSD_INTEGER;
-          }
-        }
-
-        // default to xsd:string datatype
-        $datatype or $datatype = self::XSD_STRING;
-
-        $object = (object)array(
-          'nominalValue' => $value,
-          'interfaceName' => 'LiteralNode',
-          'datatype' => (object)array(
-            'nominalValue' => $datatype,
-            'interfaceName' => 'IRI'));
-        if(property_exists($element, '@language') &&
-          $datatype === self::XSD_STRING) {
-          $object->language = $element->{'@language'};
-        }
-
-        // emit literal
-        $statement = (object)array(
-          'subject' => self::copy($subject),
-          'property' => self::copy($property),
-          'object' => $object);
-        if($graph !== null) {
-          $statement->name = $graph;
-        }
-        JsonLdProcessor::_appendUniqueRdfStatement($statements, $statement);
-        return;
-      }
-
-      // convert @list
-      if(self::_isList($element)) {
-        $list = $this->_makeLinkedList($element);
-        $this->_toRDF($list, $namer, $subject, $property, $graph, $statements);
-        return;
-      }
-
-      // Note: element must be a subject
-
-      // get subject @id (generate one if it is a bnode)
-      $id = property_exists($element, '@id') ? $element->{'@id'} : null;
-      $is_bnode = self::_isBlankNode($element);
-      if($is_bnode) {
-        $id = $namer->getName($id);
-      }
-
-      // create object
-      $object = (object)array(
-        'nominalValue' => $id,
-        'interfaceName' => $is_bnode ? 'BlankNode' : 'IRI');
-
-      // emit statement if subject isn't null
-      if($subject !== null) {
-        $statement = (object)array(
-          'subject' => self::copy($subject),
-          'property' => self::copy($property),
-          'object' => self::copy($object));
-        if($graph !== null) {
-          $statement->name = $graph;
-        }
-        JsonLdProcessor::_appendUniqueRdfStatement($statements, $statement);
-      }
-
-      // set new active subject to object
-      $subject = $object;
-
-      // recurse over subject properties in order
-      $props = array_keys((array)$element);
-      sort($props);
-      foreach($props as $prop) {
-        $p = $prop;
-
-        // convert @type to rdf:type
-        if($prop === '@type') {
-          $p = self::RDF_TYPE;
-        }
-
-        // recurse into @graph
-        if($prop === '@graph') {
-          $this->_toRDF(
-            $element->{$prop}, $namer, null, null, $subject, $statements);
-          continue;
-        }
-
-        // skip keywords
-        if(self::_isKeyword($p)) {
-          continue;
-        }
-
-        // create new active property
-        $property = (object)array(
-          'nominalValue' => $p,
-          'interfaceName' => 'IRI');
-
-        // recurse into value
-        $this->_toRDF(
-          $element->{$prop}, $namer, $subject, $property, $graph, $statements);
-      }
-
-      return;
-    }
-
+    // recurse into arrays
     if(is_array($element)) {
       // recurse into arrays
       foreach($element as $e) {
@@ -2067,16 +2327,134 @@ class JsonLdProcessor {
     if(is_string($element)) {
       // emit IRI
       $statement = (object)array(
-        'subject' => self::copy($subject),
-        'property' => self::copy($property),
-        'object' => (object)array(
-          'nominalValue' => $element,
-          'interfaceName' => 'IRI'));
+          'subject' => self::copy($subject),
+          'property' => self::copy($property),
+          'object' => (object)array(
+              'nominalValue' => $element,
+              'interfaceName' => 'IRI'));
       if($graph !== null) {
         $statement->name = $graph;
       }
-      JsonLdProcessor::_appendUniqueRdfStatement($statements, $statement);
+      self::_appendUniqueRdfStatement($statements, $statement);
       return;
+    }
+
+    // convert @list
+    if(self::_isList($element)) {
+      $list = $this->_makeLinkedList($element);
+      $this->_toRDF($list, $namer, $subject, $property, $graph, $statements);
+      return;
+    }
+
+    // convert @value to object
+    if(self::_isValue($element)) {
+      $value = $element->{'@value'};
+      $datatype = (property_exists($element, '@type') ?
+          $element->{'@type'} : null);
+      if(is_bool($value) || is_double($value) || is_integer($value)) {
+        // convert to XSD datatypes as appropriate
+        if(is_bool($value)) {
+          $value = ($value ? 'true' : 'false');
+          $datatype or $datatype = self::XSD_BOOLEAN;
+        }
+        else if(is_double($value)) {
+          // canonical double representation
+          $value = preg_replace('/(\d)0*E\+?/', '$1E',
+              sprintf('%1.15E', $value));
+          $datatype or $datatype = self::XSD_DOUBLE;
+        }
+        else {
+          $value = strval($value);
+          $datatype or $datatype = self::XSD_INTEGER;
+        }
+      }
+
+      // default to xsd:string datatype
+      $datatype or $datatype = self::XSD_STRING;
+
+      $object = (object)array(
+        'nominalValue' => $value,
+        'interfaceName' => 'LiteralNode',
+        'datatype' => (object)array(
+          'nominalValue' => $datatype,
+          'interfaceName' => 'IRI'));
+      if(property_exists($element, '@language') &&
+        $datatype === self::XSD_STRING) {
+        $object->language = $element->{'@language'};
+      }
+
+      // emit literal
+      $statement = (object)array(
+        'subject' => self::copy($subject),
+        'property' => self::copy($property),
+        'object' => $object);
+      if($graph !== null) {
+        $statement->name = $graph;
+      }
+      self::_appendUniqueRdfStatement($statements, $statement);
+      return;
+    }
+
+    // Note: element must be a subject
+
+    // get subject @id (generate one if it is a bnode)
+    $id = property_exists($element, '@id') ? $element->{'@id'} : null;
+    $is_bnode = self::_isBlankNode($element);
+    if($is_bnode) {
+      $id = $namer->getName($id);
+    }
+
+    // create object
+    $object = (object)array(
+      'nominalValue' => $id,
+      'interfaceName' => $is_bnode ? 'BlankNode' : 'IRI');
+
+    // emit statement if subject isn't null
+    if($subject !== null) {
+      $statement = (object)array(
+        'subject' => self::copy($subject),
+        'property' => self::copy($property),
+        'object' => self::copy($object));
+      if($graph !== null) {
+        $statement->name = $graph;
+      }
+      self::_appendUniqueRdfStatement($statements, $statement);
+    }
+
+    // set new active subject to object
+    $subject = $object;
+
+    // recurse over subject properties in order
+    $props = array_keys((array)$element);
+    sort($props);
+    foreach($props as $prop) {
+      $p = $prop;
+
+      // convert @type to rdf:type
+      if($prop === '@type') {
+        $p = self::RDF_TYPE;
+      }
+
+      // recurse into @graph
+      if($prop === '@graph') {
+        $this->_toRDF(
+          $element->{$prop}, $namer, null, null, $subject, $statements);
+        continue;
+      }
+
+      // skip keywords
+      if(self::_isKeyword($p)) {
+        continue;
+      }
+
+      // create new active property
+      $property = (object)array(
+        'nominalValue' => $p,
+        'interfaceName' => 'IRI');
+
+      // recurse into value
+      $this->_toRDF(
+        $element->{$prop}, $namer, $subject, $property, $graph, $statements);
     }
   }
 
@@ -2085,13 +2463,25 @@ class JsonLdProcessor {
    *
    * @param stdClass $active_ctx the current active context.
    * @param mixed $local_ctx the local context to process.
-   * @param array $options the context processing options.
+   * @param assoc $options the context processing options.
    *
    * @return stdClass the new active context.
    */
   protected function _processContext($active_ctx, $local_ctx, $options) {
+    global $jsonld_cache;
+
+    $rval = null;
+
+    // get context from cache if available
+    if(property_exists($jsonld_cache, 'activeCtx')) {
+      $rval = $jsonld_cache->activeCtx->get($active_ctx, $local_ctx);
+      if($rval) {
+        return $rval;
+      }
+    }
+
     // initialize the resulting context
-    $rval = self::copy($active_ctx);
+    $rval = self::_cloneActiveContext($active_ctx);
 
     // normalize local context to an array
     if(is_object($local_ctx) && property_exists($local_ctx, '@context') &&
@@ -2104,7 +2494,8 @@ class JsonLdProcessor {
     foreach($ctxs as $ctx) {
       // reset to initial context
       if($ctx === null) {
-        $rval = $this->_getInitialContext();
+        $rval = $this->_getInitialContext($options);
+        $rval->namer = $active_ctx->namer;
         continue;
       }
 
@@ -2122,64 +2513,198 @@ class JsonLdProcessor {
 
       // define context mappings for keys in local context
       $defined = new stdClass();
-      foreach($ctx as $k => $v) {
-        $this->_defineContextMapping(
-          $rval, $ctx, $k, $options['base'], $defined);
+
+      // handle @vocab
+      if(property_exists($ctx, '@vocab')) {
+        $value = $ctx->{'@vocab'};
+        if($value === null) {
+          unset($rval->{'@vocab'});
+        }
+        else if(!is_string($value)) {
+          throw new JsonLdException(
+            'Invalid JSON-LD syntax; the value of "@vocab" in a ' .
+            '@context must be a string or null.',
+            'jsonld.SyntaxError', array('context' => $ctx));
+        }
+        else if(!self::_isAbsoluteIri($value)) {
+          throw new JsonLdException(
+            'Invalid JSON-LD syntax; the value of "@vocab" in a ' .
+            '@context must be an absolute IRI.',
+            'jsonld.SyntaxError', array('context' => $ctx));
+        }
+        else {
+          $rval->{'@vocab'} = $value;
+        }
+        $defined->{'@vocab'} = true;
       }
+
+      // handle @language
+      if(property_exists($ctx, '@language')) {
+        $value = $ctx->{'@language'};
+        if($value === null) {
+          unset($rval->{'@language'});
+        }
+        else if(!is_string($value)) {
+          throw new JsonLdException(
+            'Invalid JSON-LD syntax; the value of "@language" in a ' .
+            '@context must be a string or null.',
+            'jsonld.SyntaxError', array('context' => $ctx));
+        }
+        else {
+          $rval->{'@language'} = strtolower($value);
+        }
+        $defined->{'@language'} = true;
+      }
+
+      // process all other keys
+      foreach($ctx as $k => $v) {
+        $this->_createTermDefinition($rval, $ctx, $k, $defined);
+      }
+    }
+
+    // cache result
+    if(property_exists($jsonld_cache, 'activeCtx')) {
+      $jsonld_cache->activeCtx->set($active_ctx, $local_ctx, $rval);
     }
 
     return $rval;
   }
 
   /**
+   * Expands a language map.
+   *
+   * @param stdClass $language_map the language map to expand.
+   *
+   * @return array the expanded language map.
+   */
+  protected function _expandLanguageMap($language_map) {
+    $rval = array();
+    $keys = array_keys((array)$language_map);
+    sort($keys);
+    foreach($keys as $key) {
+      $values = $language_map->{$key};
+      $values = self::arrayify($values);
+      foreach($values as $item) {
+        if(!is_string($item)) {
+          throw new JsonLdException(
+            'Invalid JSON-LD syntax; language map values must be strings.',
+            'jsonld.SyntaxError', array('languageMap', $language_map));
+        }
+        $rval[] = (object)array(
+          '@value' => $item,
+          '@language' => strtolower($key));
+      }
+    }
+    return $rval;
+  }
+
+  /**
+   * Labels the blank nodes in the given value using the given UniqueNamer.
+   *
+   * @param UniqueNamer $namer the UniqueNamer to use.
+   * @param mixed $element the element with blank nodes to rename.
+   * @param bool $is_id true if the given element is an @id (or @type).
+   *
+   * @return mixed the element.
+   */
+  protected function _labelBlankNodes($namer, $element, $is_id=false) {
+    if(is_array($element)) {
+      for($i = 0; $i < count($element); ++$i) {
+        $element[$i] = $this->_labelBlankNodes($namer, $element[$i], $is_id);
+      }
+    }
+    else if(self::_isList($element)) {
+      $element->{'@list'} = $this->_labelBlankNodes(
+        $namer, $element->{'@list'}, $is_id);
+    }
+    else if(is_object($element)) {
+      // rename blank node
+      if(self::_isBlankNode($element)) {
+        $name = null;
+        if(property_exists($element, '@id')) {
+          $name = $element->{'@id'};
+        }
+        $element->{'@id'} = $namer->getName($name);
+      }
+
+      // recursively apply to all keys
+      $keys = array_keys((array)$element);
+      sort($keys);
+      foreach($keys as $key) {
+        if($key !== '@id') {
+          $element->{$key} = $this->_labelBlankNodes(
+            $namer, $element->{$key}, $key === '@type');
+        }
+      }
+    }
+    // rename blank node identifier
+    else if(is_string($element) && $is_id && strpos($element, '_:') === 0) {
+      $element = $namer->getName($element);
+    }
+
+    return $element;
+  }
+
+  /**
    * Expands the given value by using the coercion and keyword rules in the
    * given context.
    *
-   * @param stdClass $ctx the active context to use.
-   * @param string $property the property the value is associated with.
+   * @param stdClass $active_ctx the active context to use.
+   * @param string $active_property the property the value is associated with.
    * @param mixed $value the value to expand.
-   * @param string $base the base IRI to use.
    *
    * @return mixed the expanded value.
    */
-  protected function _expandValue($ctx, $property, $value, $base) {
+  protected function _expandValue($active_ctx, $active_property, $value) {
     // nothing to expand
     if($value === null) {
       return null;
     }
 
-    // default to simple string return value
-    $rval = $value;
-
     // special-case expand @id and @type (skips '@id' expansion)
-    $prop = $this->_expandTerm($ctx, $property);
-    if($prop === '@id' || $prop === '@type') {
-      $rval = $this->_expandTerm($ctx, $value, $base);
+    $expanded_property = $this->_expandIri(
+      $active_ctx, $active_property, array('vocab' => true));
+    if($expanded_property === '@id') {
+      return $this->_expandIri($active_ctx, $value, array('base' => true));
     }
-    else {
-      // get type definition from context
-      $type = self::getContextValue($ctx, $property, '@type');
+    else if($expanded_property === '@type') {
+      return $this->_expandIri(
+        $active_ctx, $value, array('vocab' => true, 'base' => true));
+    }
 
-      // do @id expansion (automatic for @graph)
-      if($type === '@id' || $prop === '@graph') {
-        $rval = (object)array('@id' => $this->_expandTerm($ctx, $value, $base));
+    // get type definition from context
+    $type = self::getContextValue($active_ctx, $active_property, '@type');
+
+    // do @id expansion (automatic for @graph)
+    if($type === '@id' || $expanded_property === '@graph') {
+      return (object)array('@id' => $this->_expandIri(
+        $active_ctx, $value, array('base' => true)));
+    }
+
+    // do not expand keyword values
+    if(self::_isKeyword($expanded_property)) {
+      return $value;
+    }
+
+    $rval = new stdClass();
+
+    // other type
+    if($type !== null) {
+      // rename blank node if requested
+      if($active_ctx->namer !== null && strpos($type, '_:') === 0) {
+        $type = $active_ctx->namer->getName($type);
       }
-      else if(!self::_isKeyword($prop)) {
-        $rval = (object)array('@value' => $value);
-
-        // other type
-        if($type !== null) {
-          $rval->{'@type'} = $type;
-        }
-        // check for language tagging
-        else {
-          $language = self::getContextValue($ctx, $property, '@language');
-          if($language !== null) {
-            $rval->{'@language'} = $language;
-          }
-        }
+      $rval->{'@type'} = $type;
+    }
+    // check for language tagging for strings
+    else if(is_string($value)) {
+      $language = self::getContextValue(
+        $active_ctx, $active_property, '@language');
+      if($language !== null) {
+        $rval->{'@language'} = $language;
       }
     }
+    $rval->{'@value'} = $value;
 
     return $rval;
   }
@@ -2230,8 +2755,10 @@ class JsonLdProcessor {
             $rval->{'@value'} = doubleval($rval->{'@value'});
           }
         }
-        // do not add xsd:string type
-        if($type !== self::XSD_STRING) {
+        // do not add native type
+        if(!in_array($type, array(
+          self::XSD_BOOLEAN, self::XSD_INTEGER, self::XSD_DOUBLE,
+          self::XSD_STRING))) {
           $rval->{'@type'} = $type;
         }
       }
@@ -2257,10 +2784,8 @@ class JsonLdProcessor {
    * @return stdClass the head of the linked list of blank nodes.
    */
   protected function _makeLinkedList($value) {
-    // convert @list array into embedded blank node linked list
+    // convert @list array into embedded blank node linked list in reverse
     $list = $value->{'@list'};
-
-    // build linked list in reverse
     $len = count($list);
     $tail = (object)array('@id' => self::RDF_NIL);
     for($i = $len - 1; $i >= 0; --$i) {
@@ -2268,196 +2793,12 @@ class JsonLdProcessor {
         self::RDF_FIRST => array($list[$i]),
         self::RDF_REST => array($tail));
     }
-
     return $tail;
   }
 
   /**
-   * Hashes all of the statements about a blank node.
-   *
-   * @param string $id the ID of the bnode to hash statements for.
-   * @param stdClass $bnodes the mapping of bnodes to statements.
-   * @param UniqueNamer $namer the canonical bnode namer.
-   *
-   * @return string the new hash.
-   */
-  protected function _hashStatements($id, $bnodes, $namer) {
-    // return cached hash
-    if(property_exists($bnodes->{$id}, 'hash')) {
-      return $bnodes->{$id}->hash;
-    }
-
-    // serialize all of bnode's statements
-    $statements = $bnodes->{$id}->statements;
-    $nquads = array();
-    foreach($statements as $statement) {
-      $nquads[] = $this->toNQuad($statement, $id);
-    }
-
-    // sort serialized quads
-    sort($nquads);
-
-    // cache and return hashed quads
-    $hash = $bnodes->{$id}->hash = sha1(implode($nquads));
-    return $hash;
-  }
-
-  /**
-   * Produces a hash for the paths of adjacent bnodes for a bnode,
-   * incorporating all information about its subgraph of bnodes. This
-   * method will recursively pick adjacent bnode permutations that produce the
-   * lexicographically-least 'path' serializations.
-   *
-   * @param string $id the ID of the bnode to hash paths for.
-   * @param stdClass $bnodes the map of bnode statements.
-   * @param UniqueNamer $namer the canonical bnode namer.
-   * @param UniqueNamer $path_namer the namer used to assign names to adjacent
-   *          bnodes.
-   *
-   * @return stdClass the hash and path namer used.
-   */
-  protected function _hashPaths($id, $bnodes, $namer, $path_namer) {
-    // create SHA-1 digest
-    $md = hash_init('sha1');
-
-    // group adjacent bnodes by hash, keep properties and references separate
-    $groups = new stdClass();
-    $statements = $bnodes->{$id}->statements;
-    foreach($statements as $statement) {
-      // get adjacent bnode
-      $bnode = $this->_getAdjacentBlankNodeName($statement->subject, $id);
-      if($bnode !== null) {
-        $direction = 'p';
-      }
-      else {
-        $bnode = $this->_getAdjacentBlankNodeName($statement->object, $id);
-        if($bnode !== null) {
-          $direction = 'r';
-        }
-      }
-      if($bnode !== null) {
-        // get bnode name (try canonical, path, then hash)
-        if($namer->isNamed($bnode)) {
-          $name = $namer->getName($bnode);
-        }
-        else if($path_namer->isNamed($bnode)) {
-          $name = $path_namer->getName($bnode);
-        }
-        else {
-          $name = $this->_hashStatements($bnode, $bnodes, $namer);
-        }
-
-        // hash direction, property, and bnode name/hash
-        $group_md = hash_init('sha1');
-        hash_update($group_md, $direction);
-        hash_update($group_md, $statement->property->nominalValue);
-        hash_update($group_md, $name);
-        $group_hash = hash_final($group_md);
-
-        // add bnode to hash group
-        if(property_exists($groups, $group_hash)) {
-          $groups->{$group_hash}[] = $bnode;
-        }
-        else {
-          $groups->{$group_hash} = array($bnode);
-        }
-      }
-    }
-
-    // iterate over groups in sorted hash order
-    $group_hashes = array_keys((array)$groups);
-    sort($group_hashes);
-    foreach($group_hashes as $group_hash) {
-      // digest group hash
-      hash_update($md, $group_hash);
-
-      // choose a path and namer from the permutations
-      $chosen_path = null;
-      $chosen_namer = null;
-      $permutator = new Permutator($groups->{$group_hash});
-      while($permutator->hasNext()) {
-        $permutation = $permutator->next();
-        $path_namer_copy = clone $path_namer;
-
-        // build adjacent path
-        $path = '';
-        $skipped = false;
-        $recurse = array();
-        foreach($permutation as $bnode) {
-          // use canonical name if available
-          if($namer->isNamed($bnode)) {
-            $path .= $namer->getName($bnode);
-          }
-          else {
-            // recurse if bnode isn't named in the path yet
-            if(!$path_namer_copy->isNamed($bnode)) {
-              $recurse[] = $bnode;
-            }
-            $path .= $path_namer_copy->getName($bnode);
-          }
-
-          // skip permutation if path is already >= chosen path
-          if($chosen_path !== null && strlen($path) >= strlen($chosen_path) &&
-            $path > $chosen_path) {
-            $skipped = true;
-            break;
-          }
-        }
-
-        // recurse
-        if(!$skipped) {
-          foreach($recurse as $bnode) {
-            $result = $this->_hashPaths(
-              $bnode, $bnodes, $namer, $path_namer_copy);
-            $path .= $path_namer_copy->getName($bnode);
-            $path .= "<{$result->hash}>";
-            $path_namer_copy = $result->pathNamer;
-
-            // skip permutation if path is already >= chosen path
-            if($chosen_path !== null &&
-              strlen($path) >= strlen($chosen_path) && $path > $chosen_path) {
-              $skipped = true;
-              break;
-            }
-          }
-        }
-
-        if(!$skipped && ($chosen_path === null || $path < $chosen_path)) {
-          $chosen_path = $path;
-          $chosen_namer = $path_namer_copy;
-        }
-      }
-
-      // digest chosen path and update namer
-      hash_update($md, $chosen_path);
-      $path_namer = $chosen_namer;
-    }
-
-    // return SHA-1 hash and path namer
-    return (object)array(
-      'hash' => hash_final($md), 'pathNamer' => $path_namer);
-  }
-
-  /**
-   * A helper function that gets the blank node name from an RDF statement
-   * node (subject or object). If the node is not a blank node or its
-   * nominal value does not match the given blank node ID, it will be
-   * returned.
-   *
-   * @param stdClass $node the RDF statement node.
-   * @param string $id the ID of the blank node to look next to.
-   *
-   * @return mixed the adjacent blank node name or null if none was found.
-   */
-  protected function _getAdjacentBlankNodeName($node, $id) {
-    if($node->interfaceName === 'BlankNode' && $node->nominalValue !== $id) {
-      return $node->nominalValue;
-    }
-    return null;
-  }
-
-  /**
-   * Recursively flattens the subjects in the given JSON-LD expanded input.
+   * Recursively flattens the subjects in the given JSON-LD expanded input
+   * into a node map.
    *
    * @param mixed $input the JSON-LD expanded input.
    * @param stdClass $graphs a map of graph name to subject map.
@@ -2466,17 +2807,38 @@ class JsonLdProcessor {
    * @param mixed $name the name assigned to the current input if it is a bnode.
    * @param mixed $list the list to append to, null for none.
    */
-  protected function _flatten($input, $graphs, $graph, $namer, $name, $list) {
+  protected function _createNodeMap(
+    $input, $graphs, $graph, $namer, $name=null, $list=null) {
     // recurse through array
     if(is_array($input)) {
       foreach($input as $e) {
-        $this->_flatten($e, $graphs, $graph, $namer, null, $list);
+        $this->_createNodeMap($e, $graphs, $graph, $namer, null, $list);
       }
       return;
     }
 
-    // add non-object or value
+    // add non-object to list
     if(!is_object($input) || self::_isValue($input)) {
+      if($list !== null) {
+        $list[] = $input;
+      }
+      return;
+    }
+
+    // add entries for @type
+    if(property_exists($input, '@type')) {
+      $types = $input->{'@type'};
+      $types = self::arrayify($types);
+      foreach($types as $type) {
+        $id = (strpos($type, '_:') === 0) ? $namer->getName($type) : $type;
+        if(!property_exists($graphs->{$graph}, $id)) {
+          $graphs->{$graph}->{$id} = (object)array('@id' => $id);
+        }
+      }
+    }
+
+    // add add values to list
+    if(self::_isValue($input)) {
       if($list !== null) {
         $list[] = $input;
       }
@@ -2510,30 +2872,39 @@ class JsonLdProcessor {
     }
     $subject = $subjects->{$name};
     $subject->{'@id'} = $name;
-    foreach($input as $prop => $objects) {
+    $properties = array_keys((array)$input);
+    sort($properties);
+    foreach($properties as $property) {
       // skip @id
-      if($prop === '@id') {
+      if($property === '@id') {
         continue;
       }
 
       // recurse into graph
-      if($prop === '@graph') {
+      if($property === '@graph') {
         // add graph subjects map entry
         if(!property_exists($graphs, $name)) {
           $graphs->{$name} = new stdClass();
         }
         $g = ($graph === '@merged') ? $graph : $name;
-        $this->_flatten($objects, $graphs, $g, $namer, null, null);
+        $this->_createNodeMap(
+          $input->{$property}, $graphs, $g, $namer, null, null);
         continue;
       }
 
       // copy non-@type keywords
-      if($prop !== '@type' && self::_isKeyword($prop)) {
-        $subject->{$prop} = $objects;
+      if($property !== '@type' && self::_isKeyword($property)) {
+        $subject->{$property} = $input->{$property};
         continue;
       }
 
       // iterate over objects
+      $objects = $input->{$property};
+      if(count($objects) === 0) {
+        self::addValue(
+          $subject, $property, array(), array('propertyIsArray' => true));
+        continue;
+      }
       foreach($objects as $o) {
         // handle embedded subject or subject reference
         if(self::_isSubject($o) || self::_isSubjectReference($o)) {
@@ -2545,25 +2916,24 @@ class JsonLdProcessor {
 
           // add reference and recurse
           self::addValue(
-            $subject, $prop, (object)array('@id' => $id),
+            $subject, $property, (object)array('@id' => $id),
             array('propertyIsArray' => true));
-          $this->_flatten($o, $graphs, $graph, $namer, $id, null);
+          $this->_createNodeMap($o, $graphs, $graph, $namer, $id, null);
         }
+        // handle $list
+        else if(self::_isList($o)) {
+          $_list = new ArrayObject();
+          $this->_createNodeMap(
+            $o->{'@list'}, $graphs, $graph, $namer, $name, $_list);
+          $o = (object)array('@list' => (array)$_list);
+          self::addValue(
+            $subject, $property, $o, array('propertyIsArray' => true));
+        }
+        // handle @value
         else {
-          // recurse into list
-          if(self::_isList($o)) {
-            $_list = new ArrayObject();
-            $this->_flatten(
-              $o->{'@list'}, $graphs, $graph, $namer, $name, $_list);
-            $o = (object)array('@list' => (array)$_list);
-          }
-          // special-handle @type blank nodes
-          else if($prop === '@type' && strpos($o, '_:') === 0) {
-            $o = $namer->getName($o);
-          }
-
-          // add non-subject
-          self::addValue($subject, $prop, $o, array('propertyIsArray' => true));
+          $this->_createNodeMap($o, $graphs, $graph, $namer, $name, null);
+          self::addValue(
+            $subject, $property, $o, array('propertyIsArray' => true));
         }
       }
     }
@@ -2992,6 +3362,190 @@ class JsonLdProcessor {
   }
 
   /**
+   * Hashes all of the statements about a blank node.
+   *
+   * @param string $id the ID of the bnode to hash statements for.
+   * @param stdClass $bnodes the mapping of bnodes to statements.
+   * @param UniqueNamer $namer the canonical bnode namer.
+   *
+   * @return string the new hash.
+   */
+  protected function _hashStatements($id, $bnodes, $namer) {
+    // return cached hash
+    if(property_exists($bnodes->{$id}, 'hash')) {
+      return $bnodes->{$id}->hash;
+    }
+
+    // serialize all of bnode's statements
+    $statements = $bnodes->{$id}->statements;
+    $nquads = array();
+    foreach($statements as $statement) {
+      $nquads[] = $this->toNQuad($statement, $id);
+    }
+
+    // sort serialized quads
+    sort($nquads);
+
+    // cache and return hashed quads
+    $hash = $bnodes->{$id}->hash = sha1(implode($nquads));
+    return $hash;
+  }
+
+  /**
+   * Produces a hash for the paths of adjacent bnodes for a bnode,
+   * incorporating all information about its subgraph of bnodes. This
+   * method will recursively pick adjacent bnode permutations that produce the
+   * lexicographically-least 'path' serializations.
+   *
+   * @param string $id the ID of the bnode to hash paths for.
+   * @param stdClass $bnodes the map of bnode statements.
+   * @param UniqueNamer $namer the canonical bnode namer.
+   * @param UniqueNamer $path_namer the namer used to assign names to adjacent
+   *          bnodes.
+   *
+   * @return stdClass the hash and path namer used.
+   */
+  protected function _hashPaths($id, $bnodes, $namer, $path_namer) {
+    // create SHA-1 digest
+    $md = hash_init('sha1');
+
+    // group adjacent bnodes by hash, keep properties and references separate
+    $groups = new stdClass();
+    $statements = $bnodes->{$id}->statements;
+    foreach($statements as $statement) {
+      // get adjacent bnode
+      $bnode = $this->_getAdjacentBlankNodeName($statement->subject, $id);
+      if($bnode !== null) {
+        $direction = 'p';
+      }
+      else {
+        $bnode = $this->_getAdjacentBlankNodeName($statement->object, $id);
+        if($bnode !== null) {
+          $direction = 'r';
+        }
+      }
+      if($bnode !== null) {
+        // get bnode name (try canonical, path, then hash)
+        if($namer->isNamed($bnode)) {
+          $name = $namer->getName($bnode);
+        }
+        else if($path_namer->isNamed($bnode)) {
+          $name = $path_namer->getName($bnode);
+        }
+        else {
+          $name = $this->_hashStatements($bnode, $bnodes, $namer);
+        }
+
+        // hash direction, property, and bnode name/hash
+        $group_md = hash_init('sha1');
+        hash_update($group_md, $direction);
+        hash_update($group_md, $statement->property->nominalValue);
+        hash_update($group_md, $name);
+        $group_hash = hash_final($group_md);
+
+        // add bnode to hash group
+        if(property_exists($groups, $group_hash)) {
+          $groups->{$group_hash}[] = $bnode;
+        }
+        else {
+          $groups->{$group_hash} = array($bnode);
+        }
+      }
+    }
+
+    // iterate over groups in sorted hash order
+    $group_hashes = array_keys((array)$groups);
+    sort($group_hashes);
+    foreach($group_hashes as $group_hash) {
+      // digest group hash
+      hash_update($md, $group_hash);
+
+      // choose a path and namer from the permutations
+      $chosen_path = null;
+      $chosen_namer = null;
+      $permutator = new Permutator($groups->{$group_hash});
+      while($permutator->hasNext()) {
+        $permutation = $permutator->next();
+        $path_namer_copy = clone $path_namer;
+
+        // build adjacent path
+        $path = '';
+        $skipped = false;
+        $recurse = array();
+        foreach($permutation as $bnode) {
+          // use canonical name if available
+          if($namer->isNamed($bnode)) {
+            $path .= $namer->getName($bnode);
+          }
+          else {
+            // recurse if bnode isn't named in the path yet
+            if(!$path_namer_copy->isNamed($bnode)) {
+              $recurse[] = $bnode;
+            }
+            $path .= $path_namer_copy->getName($bnode);
+          }
+
+          // skip permutation if path is already >= chosen path
+          if($chosen_path !== null && strlen($path) >= strlen($chosen_path) &&
+            $path > $chosen_path) {
+            $skipped = true;
+            break;
+          }
+        }
+
+        // recurse
+        if(!$skipped) {
+          foreach($recurse as $bnode) {
+            $result = $this->_hashPaths(
+              $bnode, $bnodes, $namer, $path_namer_copy);
+            $path .= $path_namer_copy->getName($bnode);
+            $path .= "<{$result->hash}>";
+            $path_namer_copy = $result->pathNamer;
+
+            // skip permutation if path is already >= chosen path
+            if($chosen_path !== null &&
+              strlen($path) >= strlen($chosen_path) && $path > $chosen_path) {
+              $skipped = true;
+              break;
+            }
+          }
+        }
+
+        if(!$skipped && ($chosen_path === null || $path < $chosen_path)) {
+          $chosen_path = $path;
+          $chosen_namer = $path_namer_copy;
+        }
+      }
+
+      // digest chosen path and update namer
+      hash_update($md, $chosen_path);
+      $path_namer = $chosen_namer;
+    }
+
+    // return SHA-1 hash and path namer
+    return (object)array(
+      'hash' => hash_final($md), 'pathNamer' => $path_namer);
+  }
+
+  /**
+   * A helper function that gets the blank node name from an RDF statement
+   * node (subject or object). If the node is not a blank node or its
+   * nominal value does not match the given blank node ID, it will be
+   * returned.
+   *
+   * @param stdClass $node the RDF statement node.
+   * @param string $id the ID of the blank node to look next to.
+   *
+   * @return mixed the adjacent blank node name or null if none was found.
+   */
+  protected function _getAdjacentBlankNodeName($node, $id) {
+    if($node->interfaceName === 'BlankNode' && $node->nominalValue !== $id) {
+      return $node->nominalValue;
+    }
+    return null;
+  }
+
+  /**
    * Compares two strings first based on length and then lexicographically.
    *
    * @param string $a the first string.
@@ -3000,107 +3554,112 @@ class JsonLdProcessor {
    * @return integer -1 if a < b, 1 if a > b, 0 if a == b.
    */
   protected function _compareShortestLeast($a, $b) {
-    if(strlen($a) < strlen($b)) {
+    $len_a = strlen($a);
+    $len_b = strlen($b);
+    if($len_a < $len_b) {
       return -1;
     }
-    else if(strlen($b) < strlen($a)) {
+    else if($len_b < $len_a) {
       return 1;
     }
-    return ($a < $b) ? -1 : (($a > $b) ? 1 : 0);
+    else if($a === $b) {
+      return 0;
+    }
+    return ($a < $b) ? -1 : 1;
   }
 
   /**
-   * Ranks a term that is possible choice for compacting an IRI associated with
-   * the given value.
+   * Picks the preferred compaction term from the given inverse context entry.
    *
-   * @param stdClass $ctx the active context.
-   * @param string $term the term to rank.
-   * @param mixed $value the associated value.
+   * @param active_ctx the active context.
+   * @param iri the IRI to pick the term for.
+   * @param value the value to pick the term for.
+   * @param parent the parent of the value (required for property generators).
+   * @param containers the preferred containers.
+   * @param type_or_language either '@type' or '@language'.
+   * @param type_or_language_value the preferred value for '@type' or
+   *          '@language'.
    *
-   * @return integer the term rank.
+   * @return mixed the preferred term.
    */
-  protected function _rankTerm($ctx, $term, $value) {
-    // no term restrictions for a null value
-    if($value === null) {
-      return 3;
+  protected function _selectTerm(
+    $active_ctx, $iri, $value, $parent, $containers,
+    $type_or_language, $type_or_language_value) {
+    $containers[] = '@none';
+    if($type_or_language_value === null) {
+      $type_or_language_value = '@null';
     }
-
-    // get context entry for term
-    $entry = $ctx->mappings->{$term};
-    $has_type = property_exists($entry, '@type');
-    $has_language = property_exists($entry, '@language');
-    $has_default_language = property_exists($ctx, '@language');
-
-    // @list rank is the sum of its values' ranks
-    if(self::_isList($value)) {
-      $list = $value->{'@list'};
-      if(count($list) === 0) {
-        return ($entry->{'@container'} === '@list') ? 1 : 0;
+    // options for the value of @type or @language
+    $options = array($type_or_language_value, '@none');
+    $term = null;
+    $container_map = $active_ctx->inverse->{$iri};
+    foreach($containers as $container) {
+      if($term !== null) {
+        break;
       }
-      // sum term ranks for each list value
-      $sum = 0;
-      foreach($list as $v) {
-        $sum += $this->_rankTerm($ctx, $term, $v);
+
+      // if container not available in the map, continue
+      if(!property_exists($container_map, $container)) {
+        continue;
       }
-      return $sum;
-    }
 
-    // Note: Value must be an object that is a @value or subject/reference.
-
-    if(self::_isValue($value)) {
-      // value has a @type
-      if(property_exists($value, '@type')) {
-        // @types match
-        if($has_type && $value->{'@type'} === $entry->{'@type'}) {
-          return 3;
+      $type_or_language_value_map =
+        $container_map->{$container}->{$type_or_language};
+      foreach($options as $option) {
+        if($term !== null) {
+          break;
         }
-        return (!$has_type && !$has_language) ? 1 : 0;
-      }
 
-      // rank non-string value
-      if(!is_string($value->{'@value'})) {
-        return (!$has_type && !$has_language) ? 2 : 1;
-      }
-
-      // value has no @type or @language
-      if(!property_exists($value, '@language')) {
-        // entry @language is specifically null or no @type, @language, or
-        // default
-        if(($has_language && $entry->{'@language'} === null) ||
-          (!$has_type && !$has_language && !$has_default_language)) {
-          return 3;
+        // if type/language option not available in the map, continue
+        if(!property_exists($type_or_language_value_map, $option)) {
+          continue;
         }
-        return 0;
-      }
 
-      // @languages match or entry has no @type or @language but default
-      // @language matches
-      if(($has_language && $value->{'@language'} === $entry->{'@language'}) ||
-        (!$has_type && !$has_language && $has_default_language &&
-          $value->{'@language'} === $ctx->{'@language'})) {
-        return 3;
-      }
-      return (!$has_type && !$has_language) ? 1 : 0;
-    }
+        $term_info = $type_or_language_value_map->{$option};
 
-    // value must be a subject/reference
-    if($has_type && $entry->{'@type'} === '@id') {
-      return 3;
+        // see if a property generator matches
+        if(is_object($parent)) {
+          foreach($term_info->propertyGenerators as $property_generator) {
+            $iris = $active_ctx->mappings->{$property_generator}->{'@id'};
+            $match = true;
+            foreach($iris as $iri_) {
+              if(!property_exists($parent, $iri_)) {
+                $match = false;
+                break;
+              }
+            }
+            if($match) {
+              $term = $property_generator;
+              break;
+            }
+          }
+        }
+
+        // no matching property generator, use a simple term instead
+        if($term === null) {
+          $term = $term_info->term;
+        }
+      }
     }
-    return (!$has_type && !$has_language) ? 1 : 0;
+    return $term;
   }
 
   /**
    * Compacts an IRI or keyword into a term or prefix if it can be. If the
    * IRI has an associated value it may be passed.
    *
-   * @param stdClass $ctx the active context to use.
+   * @param stdClass $active_ctx the active context to use.
    * @param string $iri the IRI to compact.
    * @param mixed $value the value to check or null.
+   * @param assoc $relative_to options for how to compact IRIs:
+   *          base: true to compact against the base IRI, false not to.
+   *          vocab: true to split after @vocab, false not to.
+   * @param mixed $parent the parent element for the value.
    *
    * @return string the compacted term, prefix, keyword alias, or original IRI.
    */
-  protected function _compactIri($ctx, $iri, $value=null) {
+  protected function _compactIri(
+    $active_ctx, $iri, $value=null, $relative_to=array(), $parent=null) {
     // can't compact null
     if($iri === null) {
       return $iri;
@@ -3109,219 +3668,355 @@ class JsonLdProcessor {
     // term is a keyword
     if(self::_isKeyword($iri)) {
       // return alias if available
-      $aliases = $ctx->keywords->{$iri};
-      if(count($aliases) > 0) {
-        return $aliases[0];
+      $aliases = $active_ctx->keywords->{$iri};
+      return (count($aliases) > 0) ? $aliases[0] : $iri;
+    }
+
+    // use inverse context to pick a term
+    $inverse_ctx = $this->_getInverseContext($active_ctx);
+
+    $default_language = '@none';
+    if(property_exists($active_ctx, '@language')) {
+      $default_language = $active_ctx->{'@language'};
+    }
+
+    if(property_exists($inverse_ctx, $iri)) {
+      // prefer @index if available in value
+      $containers = array();
+      if(is_object($value) && property_exists($value, '@index')) {
+        $containers[] = '@index';
+      }
+
+      // defaults for term selection based on type/language
+      $type_or_language = '@language';
+      $type_or_language_value = '@null';
+
+      // choose the most specific term that works for all elements in @list
+      if(self::_isList($value)) {
+        // only select @list containers if @index is NOT in value
+        if(!property_exists($value, '@index')) {
+          $containers[] = '@list';
+        }
+        $list = $value->{'@list'};
+        $common_language = (count($list) === 0) ? $default_language : null;
+        $common_type = null;
+        foreach($list as $item) {
+          $item_language = '@none';
+          $item_type = '@none';
+          if(self::_isValue($item)) {
+            if(property_exists($item, '@language')) {
+              $item_language = $item->{'@language'};
+            }
+            else if(property_exists($item, '@type')) {
+              $item_type = $item->{'@type'};
+            }
+            // plain literal
+            else {
+              $item_language = '@null';
+            }
+          }
+          if($common_language === null) {
+            $common_language = $item_language;
+          }
+          else if($item_language !== $common_language &&
+            self::_isValue($item)) {
+            $common_language = '@none';
+          }
+          if($common_type === null) {
+            $common_type = $item_type;
+          }
+          else if($item_type !== $common_type) {
+            $common_type = '@none';
+          }
+          // there are different languages and types in the list, so choose
+          // the most generic term, no need to keep iterating the list
+          if($common_language === '@none' && $common_type === '@none') {
+            break;
+          }
+        }
+        $common_language = $common_language || '@none';
+        $common_type = $common_type || '@none';
+        if($common_type !== '@none') {
+          $type_or_language = '@type';
+          $type_or_language_value = $common_type;
+        }
+        else {
+          $type_or_language_value = $common_language;
+        }
       }
       else {
-        // no alias, keep original keyword
-        return $iri;
-      }
-    }
-
-    // find all possible term matches
-    $terms = array();
-    $highest = 0;
-    $list_container = false;
-    $is_list = self::_isList($value);
-    foreach($ctx->mappings as $term => $entry) {
-      $has_container = property_exists($entry, '@container');
-
-      // skip terms with non-matching iris
-      if($entry->{'@id'} !== $iri) {
-        continue;
-      }
-      // skip @set containers for @lists
-      if($is_list && $has_container && $entry->{'@container'} === '@set') {
-        continue;
-      }
-      // skip @list containers for non-@lists
-      if(!$is_list && $has_container && $entry->{'@container'} === '@list' &&
-        $value !== null) {
-        continue;
-      }
-      // for @lists, if list_container is set, skip non-list containers
-      if($is_list && $list_container && (!$has_container ||
-        $entry->{'@container'} !== '@list')) {
-        continue;
-      }
-
-      // rank term
-      $rank = $this->_rankTerm($ctx, $term, $value);
-      if($rank > 0) {
-        // add 1 to rank if container is a @set
-        if($has_container && $entry->{'@container'} === '@set') {
-          $rank += 1;
-        }
-
-        // for @lists, give preference to @list containers
-        if($is_list && !$list_container && $has_container &&
-          $entry->{'@container'} === '@list') {
-          $list_container = true;
-          $terms = array();
-          $highest = $rank;
-          $terms[] = $term;
-        }
-        // only push match if rank meets current threshold
-        else if($rank >= $highest) {
-          if($rank > $highest) {
-            $terms = array();
-            $highest = $rank;
+        if(self::_isValue($value)) {
+          if(property_exists($value, '@language')) {
+            $containers[] = '@language';
+            $type_or_language_value = $value->{'@language'};
           }
-          $terms[] = $term;
+          else if(property_exists($value, '@type')) {
+            $type_or_language = '@type';
+            $type_or_language_value = $value->{'@type'};
+          }
         }
+        else {
+          $type_or_language = '@type';
+          $type_or_language_value = '@id';
+        }
+        $containers[] = '@set';
+      }
+
+      // do term selection
+      $term = $this->_selectTerm(
+        $active_ctx, $iri, $value, $parent,
+        $containers, $type_or_language, $type_or_language_value);
+      if($term !== null) {
+        return $term;
       }
     }
 
-    // no matching terms, use @vocab if available
-    if(count($terms) === 0 && property_exists($ctx, '@vocab') &&
-      $ctx->{'@vocab'} !== null) {
+    // no term match, check for possible CURIEs
+    $choice = null;
+    foreach($active_ctx->mappings as $term => $definition) {
+      // skip terms with colons, they can't be prefixes
+      if(strpos($term, ':') !== false) {
+        continue;
+      }
+      // skip entries with @ids that are not partial matches
+      if($definition === null || $definition->propertyGenerator ||
+        $definition->{'@id'} === $iri ||
+        strpos($iri, $definition->{'@id'}) !== 0) {
+        continue;
+      }
+
+      // a CURIE is usable if:
+      // 1. it has no mapping, OR
+      // 2. value is null, which means we're not compacting an @value, AND
+      //   the mapping matches the IRI)
+      $curie = $term . ':' . substr($iri, strlen($definition->{'@id'}));
+      $is_usable_curie = (!property_exists($active_ctx->mappings, $curie) ||
+        ($value === null && $active_ctx->mappings->{$curie} &&
+        $active_ctx->mappings->{$curie}->{'@id'} === $iri));
+
+      // select curie if it is shorter or the same length but lexicographically
+      // less than the current choice
+      if($is_usable_curie && ($choice === null ||
+        self::_compareShortestLeast($curie, $choice) < 0)) {
+        $choice = $curie;
+      }
+    }
+
+    // return chosen curie
+    if($choice !== null) {
+      return $choice;
+    }
+
+    // no matching terms or curies, use @vocab if available
+    if(isset($relative_to['vocab']) && $relative_to['vocab'] &&
+      property_exists($active_ctx, '@vocab')) {
       // determine if vocab is a prefix of the iri
-      $vocab = $ctx->{'@vocab'};
-      if(strpos($iri, $vocab) === 0) {
+      $vocab = $active_ctx->{'@vocab'};
+      if(strpos($iri, $vocab) === 0 && $iri !== $vocab) {
         // use suffix as relative iri if it is not a term in the active context
         $suffix = substr($iri, strlen($vocab));
-        if(!property_exists($ctx->mappings, $suffix)) {
+        if(!property_exists($active_ctx->mappings, $suffix)) {
           return $suffix;
         }
       }
     }
 
-    // no term matches, add possible CURIEs
-    if(count($terms) === 0) {
-      foreach($ctx->mappings as $term => $entry) {
-        // skip terms with colons, they can't be prefixes
-        if(strpos($term, ':') !== false) {
-          continue;
-        }
-        // skip entries with @ids that are not partial matches
-        if($entry->{'@id'} === $iri || strpos($iri, $entry->{'@id'}) !== 0) {
-          continue;
-        }
-
-        // add CURIE as term if it has no mapping
-        $curie = $term . ':' . substr($iri, strlen($entry->{'@id'}));
-        if(!property_exists($ctx->mappings, $curie)) {
-          $terms[] = $curie;
-        }
-      }
-    }
-
-    // no matching terms
-    if(count($terms) === 0) {
-      // use iri
-      return $iri;
-    }
-
-    // return shortest and lexicographically-least term
-    usort($terms, array($this, '_compareShortestLeast'));
-    return $terms[0];
+    // no compaction choices, return IRI as is
+    return $iri;
   }
 
   /**
-   * Defines a context mapping during context processing.
+   * Performs value compaction on an object with '@value' or '@id' as the only
+   * property.
+   *
+   * @param stdClass $active_ctx the active context.
+   * @param string $active_property the active property that points to the
+   *          value.
+   * @param mixed $value the value to compact.
+   *
+   * @return mixed the compaction result.
+   */
+  protected function _compactValue($active_ctx, $active_property, $value) {
+    // value is a @value
+    if(self::_isValue($value)) {
+      // get context rules
+      $type = self::getContextValue($active_ctx, $active_property, '@type');
+      $language = self::getContextValue(
+        $active_ctx, $active_property, '@language');
+      $container = self::getContextValue(
+        $active_ctx, $active_property, '@container');
+
+      // whether or not the value has an @index that must be preserved
+      $preserve_index = (property_exists($value, '@index') &&
+        $container !== '@index');
+
+      // if there's no @index to preserve ...
+      if(!$preserve_index) {
+        // matching @type or @language specified in context, compact value
+        if(self::_hasKeyValue($value, '@type', $type) ||
+          self::_hasKeyValue($value, '@language', $language)) {
+          return $value->{'@value'};
+        }
+      }
+
+      // return just the value of @value if all are true:
+      // 1. @value is the only key or @index isn't being preserved
+      // 2. there is no default language or @value is not a string or
+      //   the key has a mapping with a null @language
+      $key_count = count(array_keys((array)$value));
+      $is_value_only_key = ($key_count === 1 ||
+        ($key_count === 2 && property_exists($value, '@index') &&
+        !$preserve_index));
+      $has_default_language = property_exists($active_ctx, '@language');
+      $is_value_string = is_string($value->{'@value'});
+      $has_null_mapping = (
+        property_exists($active_ctx->mappings, $active_property) &&
+        $active_ctx->mappings->{$active_property} !== null &&
+        self::_hasKeyValue(
+          $active_ctx->mappings->{$active_property}, '@language', null));
+      if($is_value_only_key &&
+        (!$has_default_language || !$is_value_string || $has_null_mapping)) {
+        return $value->{'@value'};
+      }
+
+      $rval = new stdClass();
+
+      // preserve @index
+      if($preserve_index) {
+        $rval->{$this->_compactIri($active_ctx, '@index')} = $value->{'@index'};
+      }
+
+      // compact @type IRI
+      if(property_exists($value, '@type')) {
+        $rval->{$this->_compactIri($active_ctx, '@type')} = $this->_compactIri(
+          $active_ctx, $value->{'@type'}, null,
+          array('base' => true, 'vocab' => true));
+      }
+      // alias @language
+      else if(property_exists($value, '@language')) {
+        $rval->{$this->_compactIri($active_ctx, '@language')} =
+          $value->{'@language'};
+      }
+
+      // alias @value
+      $rval->{$this->_compactIri($active_ctx, '@value')} = $value->{'@value'};
+
+      return $rval;
+    }
+
+    // value is a subject reference
+    $expanded_property = $this->_expandIri($active_ctx, $active_property);
+    $type = self::getContextValue($active_ctx, $active_property, '@type');
+    $term = $this->_compactIri(
+      $active_ctx, $value->{'@id'}, null, array('base' => true));
+
+    // compact to scalar
+    if($type === '@id' || $expanded_property === '@graph') {
+      return $term;
+    }
+
+    $rval = (object)array(
+      $this->_compactIri($active_ctx, '@id') => $term);
+    return $rval;
+  }
+
+  /**
+   * Finds and removes any duplicate values that were presumably generated by
+   * a property generator in the given element.
+   *
+   * @param stdClass $active_ctx the active context.
+   * @param stdClass $element the element to remove duplicates from.
+   * @param string $expanded_property the property to map to a property
+   *          generator.
+   * @param mixed $value the value to compare against when duplicate checking.
+   * @param string $active_property the property generator term.
+   */
+  protected function _findAndRemovePropertyGeneratorDuplicates(
+    $active_ctx, $element, $expanded_property, $value, $active_property) {
+    // get property generator IRIs
+    $iris = $active_ctx->mappings->{$active_property}->{'@id'};
+
+    // for each IRI that isn't 'expandedProperty', remove a single duplicate
+    // from element, if found
+    foreach($iris as $iri) {
+      if($iri === $expanded_property) {
+        continue;
+      }
+      for($pi = 0; $pi < count($element->{$iri}); ++$pi) {
+        if(self::compareValues($element->{$iri}[$pi], $value)) {
+          // duplicate found, remove it in place
+          array_splice($element->{$iri}, $pi, 1);
+          if(count($element->{$iri}) === 0) {
+            unset($element->{$iri});
+          }
+          break;
+        }
+      }
+    }
+  }
+
+  /**
+   * Creates a term definition during context processing.
    *
    * @param stdClass $active_ctx the current active context.
-   * @param stdClass $ctx the local context being processed.
-   * @param string $key the key in the local context to define the mapping for.
-   * @param string $base the base IRI.
+   * @param stdClass $local_ctx the local context being processed.
+   * @param string $term the key in the local context to define the mapping for.
    * @param stdClass $defined a map of defining/defined keys to detect cycles
    *          and prevent double definitions.
    */
-  protected function _defineContextMapping(
-    $active_ctx, $ctx, $key, $base, $defined) {
-    if(property_exists($defined, $key)) {
-      // key already defined
-      if($defined->{$key}) {
+  protected function _createTermDefinition(
+    $active_ctx, $local_ctx, $term, $defined) {
+    if(property_exists($defined, $term)) {
+      // term already defined
+      if($defined->{$term}) {
         return;
       }
       // cycle detected
       throw new JsonLdException(
         'Cyclical context definition detected.',
         'jsonld.CyclicalContext',
-        (object)array('context' => $ctx, 'key' => $key));
+        (object)array('context' => $local_ctx, 'term' => $term));
     }
 
-    // now defining key
-    $defined->{$key} = false;
+    // now defining term
+    $defined->{$term} = false;
 
-    // if key has a prefix, define it first
-    $colon = strpos($key, ':');
+    // if term has a prefix, define it first
+    $colon = strpos($term, ':');
     $prefix = null;
     if($colon !== false) {
-      $prefix = substr($key, 0, $colon);
-      if(property_exists($ctx, $prefix)) {
+      $prefix = substr($term, 0, $colon);
+      if(property_exists($local_ctx, $prefix)) {
         // define parent prefix
-        $this->_defineContextMapping(
-          $active_ctx, $ctx, $prefix, $base, $defined);
+        $this->_createTermDefinition(
+          $active_ctx, $local_ctx, $prefix, $defined);
       }
     }
 
-    // get context key value
-    $value = $ctx->{$key};
-
-    if(self::_isKeyword($key)) {
-      // support vocab
-      if($key === '@vocab') {
-        if($value !== null && !is_string($value)) {
-          throw new JsonLdException(
-            'Invalid JSON-LD syntax; the value of "@vocab" in a ' +
-            '@context must be a string or null.',
-            'jsonld.SyntaxError', array('context' => $ctx));
-        }
-        if(!self::_isAbsoluteIri($value)) {
-          throw new JsonLdException(
-            'Invalid JSON-LD syntax; the value of "@vocab" in a ' +
-            '@context must be an absolute IRI.',
-            'jsonld.SyntaxError', array('context' => $ctx));
-        }
-        if($value === null) {
-          unset($active_ctx->{'@vocab'});
-        }
-        else {
-          $active_ctx->{'@vocab'} = $value;
-        }
-        $defined->{$key} = true;
-        return;
-      }
-
-      // only @language is permitted
-      if($key !== '@language') {
-        throw new JsonLdException(
-          'Invalid JSON-LD syntax; keywords cannot be overridden.',
-          'jsonld.SyntaxError', array('context' => $ctx));
-      }
-
-      if($value !== null && !is_string($value)) {
-        throw new JsonLdException(
-          'Invalid JSON-LD syntax; the value of "@language" in a ' +
-          '@context must be a string or null.',
-          'jsonld.SyntaxError', array('context' => $ctx));
-      }
-
-      if($value === null) {
-        unset($active_ctx->{'@language'});
-      }
-      else {
-        $active_ctx->{'@language'} = $value;
-      }
-      $defined->{$key} = true;
-      return;
+    if(self::_isKeyword($term)) {
+      throw new JsonLdException(
+        'Invalid JSON-LD syntax; keywords cannot be overridden.',
+        'jsonld.SyntaxError', array('context' => $local_ctx));
     }
+
+    if(property_exists($active_ctx->mappings, $term) &&
+      $active_ctx->mappings->{$term} !== null) {
+      // if term is a keyword alias, remove it
+      $kw = $active_ctx->mappings->{$term}->{'@id'};
+      if(self::_isKeyword($kw)) {
+        array_splice($active_ctx->keywords->{$kw},
+          in_array($term, $active_ctx->keywords->{$kw}), 1);
+      }
+    }
+
+    // get context term value
+    $value = $local_ctx->{$term};
 
     // clear context entry
-    if($value === null or (is_object($value) &&
-      property_exists($value, '@id') && $value->{'@id'} === null)) {
-      if(property_exists($active_ctx->mappings, $key)) {
-        // if key is a keyword alias, remove it
-        $kw = $active_ctx->mappings->{$key}->{'@id'};
-        if(self::_isKeyword($kw)) {
-          array_splice($active_ctx->keywords->{$kw},
-            in_array($key, $active_ctx->keywords->{$kw}), 1);
-        }
-        unset($active_ctx->mappings->{$key});
-      }
-      $defined->{$key} = true;
+    if($value === null || (is_object($value) &&
+      self::_hasKeyValue($value, '@id', null))) {
+      $active_ctx->mappings->{$term} = null;
+      $defined->{$term} = true;
       return;
     }
 
@@ -3334,69 +4029,113 @@ class JsonLdProcessor {
             'jsonld.SyntaxError');
         }
 
-        // uniquely add key as a keyword alias and resort
-        if(in_array($key, $active_ctx->keywords->{$value}) === false) {
-          $active_ctx->keywords->{$value}[] = $key;
+        // uniquely add term as a keyword alias and resort
+        if(!in_array($term, $active_ctx->keywords->{$value})) {
+          $active_ctx->keywords->{$value}[] = $term;
           usort($active_ctx->keywords->{$value},
             array($this, '_compareShortestLeast'));
         }
       }
       else {
         // expand value to a full IRI
-        $value = $this->_expandContextIri(
-          $active_ctx, $ctx, $value, $base, $defined);
+        $value = $this->_expandIri(
+          $active_ctx, $value, array('base' => true), $local_ctx, $defined);
       }
 
-      // define/redefine key to expanded IRI/keyword
-      $active_ctx->mappings->{$key} = (object)array('@id' => $value);
-      $defined->{$key} = true;
+      // define/redefine term to expanded IRI/keyword
+      $active_ctx->mappings->{$term} = (object)array(
+        '@id' => $value, 'propertyGenerator' => false);
+      $defined->{$term} = true;
       return;
     }
 
     if(!is_object($value)) {
       throw new JsonLdException(
-        'Invalid JSON-LD syntax; @context property values must be ' +
+        'Invalid JSON-LD syntax; @context property values must be ' .
         'strings or objects.',
-        'jsonld.SyntaxError', array('context' => $ctx));
+        'jsonld.SyntaxError', array('context' => $local_ctx));
     }
 
     // create new mapping
     $mapping = new stdClass();
+    $mapping->propertyGenerator = false;
+
+    // merge onto parent mapping if one exists for a prefix
+    if($prefix !== null &&
+      property_exists($active_ctx->mappings, $prefix) &&
+      $active_ctx->mappings->{$prefix} !== null) {
+      $mapping = self::copy($active_ctx->mappings->{$prefix});
+    }
 
     if(property_exists($value, '@id')) {
       $id = $value->{'@id'};
-      if(!is_string($id)) {
+      // handle property generator
+      if(is_array($id)) {
+        if($active_ctx->namer === null) {
+          throw new JsonLdException(
+            'Incompatible JSON-LD options; a property generator was found ' .
+            'in the @context, but blank node renaming has been disabled; ' .
+            'it must be enabled to use property generators.',
+            'jsonld.OptionsError', array('context' => $local_ctx));
+        }
+
+        $property_generator = array();
+        $ids = $id;
+        foreach($ids as $id) {
+          if(!is_string($id)) {
+            throw new JsonLdException(
+              'Invalid JSON-LD syntax; property generators must consist of ' .
+              'an @id array containing only strings.',
+              'jsonld.SyntaxError', array('context' => $local_ctx));
+          }
+          // expand @id if it is not @type
+          if($id !== '@type') {
+            $id = $this->_expandIri(
+              $active_ctx, $id, array('base' => true), $local_ctx, $defined);
+          }
+          $property_generator[] = $id;
+        }
+        // add sorted property generator as @id in mapping
+        sort($property_generator);
+        $mapping->{'@id'} = $property_generator;
+        $mapping->propertyGenerator = true;
+      }
+      else if(!is_string($id)) {
         throw new JsonLdException(
-          'Invalid JSON-LD syntax; @context @id values must be strings.',
-          'jsonld.SyntaxError', array('context' => $ctx));
+          'Invalid JSON-LD syntax; @context @id value must be an array ' .
+          'of strings or a string.',
+          'jsonld.SyntaxError', array('context' => $local_ctx));
       }
-
-      // expand @id if it is not @type
-      if($id !== '@type') {
-        // expand @id to full IRI
-        $id = $this->_expandContextIri(
-          $active_ctx, $ctx, $id, $base, $defined);
+      else {
+        // add @id to mapping, expanding it if it is not @type
+        if($id !== '@type') {
+          // expand @id to full IRI
+          $id = $this->_expandIri(
+            $active_ctx, $id, array('base' => true), $local_ctx, $defined);
+        }
+        $mapping->{'@id'} = $id;
       }
-
-      // add @id to mapping
-      $mapping->{'@id'} = $id;
     }
     else {
-      // non-IRIs *must* define @ids
       if($prefix === null) {
-        throw new JsonLdException(
-          'Invalid JSON-LD syntax; @context terms must define an @id.',
-          'jsonld.SyntaxError', array('context' => $ctx, 'key' => $key));
+        //   non-IRIs *must* define @ids if @vocab is not available
+        if(!property_exists($active_ctx, '@vocab')) {
+          throw new JsonLdException(
+            'Invalid JSON-LD syntax; @context terms must define an @id.',
+            'jsonld.SyntaxError',
+            array('context' => $local_ctx, 'term' => $term));
+        }
+        // prepend vocab to term
+        $mapping->{'@id'} = $active_ctx->{'@vocab'} . $term;
       }
-
       // set @id based on prefix parent
-      if(property_exists($active_ctx->mappings, $prefix)) {
-        $suffix = substr($key, $colon + 1);
+      else if(property_exists($active_ctx->mappings, $prefix)) {
+        $suffix = substr($term, $colon + 1);
         $mapping->{'@id'} = $active_ctx->mappings->{$prefix}->{'@id'} . $suffix;
       }
-      // key is an absolute IRI
+      // term is an absolute IRI
       else {
-        $mapping->{'@id'} = $key;
+        $mapping->{'@id'} = $term;
       }
     }
 
@@ -3405,13 +4144,14 @@ class JsonLdProcessor {
       if(!is_string($type)) {
         throw new JsonLdException(
           'Invalid JSON-LD syntax; @context @type values must be strings.',
-          'jsonld.SyntaxError', array('context' => $ctx));
+          'jsonld.SyntaxError', array('context' => $local_ctx));
       }
 
       if($type !== '@id') {
         // expand @type to full IRI
-        $type = $this->_expandContextIri(
-          $active_ctx, $ctx, $type, '', $defined);
+        $type = $this->_expandIri(
+          $active_ctx, $type, array('vocab' => true, 'base' => true),
+          $local_ctx, $defined);
       }
 
       // add @type to mapping
@@ -3420,11 +4160,12 @@ class JsonLdProcessor {
 
     if(property_exists($value, '@container')) {
       $container = $value->{'@container'};
-      if($container !== '@list' && $container !== '@set') {
+      if($container !== '@list' && $container !== '@set' &&
+        $container !== '@index' && $container !== '@language') {
         throw new JsonLdException(
-          'Invalid JSON-LD syntax; @context @container value must be ' +
-          '"@list" or "@set".',
-          'jsonld.SyntaxError', array('context' => $ctx));
+          'Invalid JSON-LD syntax; @context @container value must be ' .
+          'one of the following: @list, @set, @index, or @language.',
+          'jsonld.SyntaxError', array('context' => $local_ctx));
       }
 
       // add @container to mapping
@@ -3436,172 +4177,149 @@ class JsonLdProcessor {
       $language = $value->{'@language'};
       if($language !== null && !is_string($language)) {
         throw new JsonLdException(
-          'Invalid JSON-LD syntax; @context @language value must be ' +
+          'Invalid JSON-LD syntax; @context @language value must be ' .
           'a string or null.',
-          'jsonld.SyntaxError', array('context' => $ctx));
+          'jsonld.SyntaxError', array('context' => $local_ctx));
       }
 
       // add @language to mapping
+      if($language !== null) {
+        $language = strtolower($language);
+      }
       $mapping->{'@language'} = $language;
     }
 
-    // merge onto parent mapping if one exists for a prefix
-    if($prefix !== null && property_exists($active_ctx->mappings, $prefix)) {
-      $child = $mapping;
-      $mapping = self::copy($active_ctx->mappings->{$prefix});
-      foreach($child as $k => $v) {
-        $mapping->{$k} = $v;
-      }
-    }
-
-    // define key mapping
-    $active_ctx->mappings->{$key} = $mapping;
-    $defined->{$key} = true;
+    // define term mapping
+    $active_ctx->mappings->{$term} = $mapping;
+    $defined->{$term} = true;
   }
 
   /**
-   * Expands a string value to a full IRI during context processing. It can
-   * be assumed that the value is not a keyword.
+   * Expands a string to a full IRI. The string may be a term, a prefix, a
+   * relative IRI, or an absolute IRI. The associated absolute IRI will be
+   * returned.
    *
    * @param stdClass $active_ctx the current active context.
-   * @param stdClass $ctx the local context being processed.
-   * @param string $value the string value to expand.
-   * @param string $base the base IRI.
-   * @param stdClass $defined a map for tracking cycles in context definitions.
+   * @param string $value the string to expand.
+   * @param assoc $relative_to options for how to resolve relative IRIs:
+   *          base: true to resolve against the base IRI, false not to.
+   *          vocab: true to concatenate after @vocab, false not to.
+   * @param stdClass $local_ctx the local context being processed (only given
+   *          if called during document processing).
+   * @param defined a map for tracking cycles in context definitions (only given
+   *          if called during document processing).
    *
    * @return mixed the expanded value.
    */
-  protected function _expandContextIri(
-    $active_ctx, $ctx, $value, $base, $defined) {
-    // dependency not defined, define it
-    if(property_exists($ctx, $value) &&
-      (!property_exists($defined, $value) || !$defined->{$value})) {
-      $this->_defineContextMapping($active_ctx, $ctx, $value, $base, $defined);
-    }
-
-    // recurse if value is a term
-    if(property_exists($active_ctx->mappings, $value)) {
-      $id = $active_ctx->mappings->{$value}->{'@id'};
-      // value is already an absolute IRI
-      if($value === $id) {
-        return $value;
-      }
-      return $this->_expandContextIri($active_ctx, $ctx, $id, $base, $defined);
-    }
-
-    // split value into prefix:suffix
-    if(strpos($value, ':') !== false) {
-      list($prefix, $suffix) = explode(':', $value, 2);
-
-      // a prefix of '_' indicates a blank node
-      if($prefix === '_') {
-        return $value;
-      }
-
-      // a suffix of '//' indicates value is an absolute IRI
-      if(strpos($suffix, '//') === 0) {
-        return $value;
-      }
-
-      // dependency not defined, define it
-      if(property_exists($ctx, $prefix) &&
-        (!property_exists($defined, $prefix) || !$defined->{$prefix})) {
-        $this->_defineContextMapping(
-          $active_ctx, $ctx, $prefix, $base, $defined);
-      }
-
-      // recurse if prefix is defined
-      if(property_exists($active_ctx->mappings, $prefix)) {
-        $id = $active_ctx->mappings->{$prefix}->{'@id'};
-        return $this->_expandContextIri(
-          $active_ctx, $ctx, $id, $base, $defined) . $suffix;
-      }
-
-      // consider value an absolute IRI
-      return $value;
-    }
-
-    // prepend vocab
-    if(property_exists($ctx, '@vocab') && $ctx->{'@vocab'} !== null) {
-      $value = $this->_prependBase($ctx->{'@vocab'}, $value);
-    }
-    // prepend base
-    else {
-      $value = $this->_prependBase($base, $value);
-    }
-
-    // value must now be an absolute IRI
-    if(!self::_isAbsoluteIri($value)) {
-      throw new JsonLdException(
-        'Invalid JSON-LD syntax; a @context value does not expand to ' +
-        'an absolute IRI.',
-        'jsonld.SyntaxError', array('context' => $ctx, 'value' => $value));
-    }
-
-    return $value;
-  }
-
-  /**
-   * Expands a term into an absolute IRI. The term may be a regular term, a
-   * prefix, a relative IRI, or an absolute IRI. In any case, the associated
-   * absolute IRI will be returned.
-   *
-   * @param stdClass $ctx the active context to use.
-   * @param string $term the term to expand.
-   * @param string $base the base IRI to use if a relative IRI is detected.
-   *
-   * @return string the expanded term as an absolute IRI.
-   */
-  protected function _expandTerm($ctx, $term, $base='') {
+  function _expandIri(
+    $active_ctx, $value, $relative_to=array(), $local_ctx=null, $defined=null) {
     // nothing to expand
-    if($term === null) {
+    if($value === null) {
       return null;
     }
 
-    // the term has a mapping, so it is a plain term
-    if(property_exists($ctx->mappings, $term)) {
-      $id = $ctx->mappings->{$term}->{'@id'};
-      // term is already an absolute IRI
-      if($term === $id) {
-        return $term;
-      }
-      return $this->_expandTerm($ctx, $id, $base);
+    // define term dependency if not defined
+    if($local_ctx !== null && property_exists($local_ctx, $value) &&
+      !self::_hasKeyValue($defined, $value, true)) {
+      $this->_createTermDefinition($active_ctx, $local_ctx, $value, $defined);
     }
 
-    // split term into prefix:suffix
-    if(strpos($term, ':') !== false) {
-      list($prefix, $suffix) = explode(':', $term, 2);
-
-      // a prefix of '_' indicates a blank node
-      if($prefix === '_') {
-        return $term;
-      }
-
-      // a suffix of '//' indicates value is an absolute IRI
-      if(strpos($suffix, '//') === 0) {
-        return $term;
-      }
-
-      // the term's prefix has a mapping, so it is a CURIE
-      if(property_exists($ctx->mappings, $prefix)) {
-        return $this->_expandTerm(
-          $ctx, $ctx->mappings->{$prefix}->{'@id'}, $base) . $suffix;
-      }
-
-      // consider term an absolute IRI
-      return $term;
+    if(property_exists($active_ctx->mappings, $value)) {
+      $mapping = $active_ctx->mappings->{$value};
     }
 
-    // use vocab
-    if(property_exists($ctx, '@vocab') && $ctx->{'@vocab'} !== null) {
-      $term = $this->_prependBase($ctx->{'@vocab'}, $term);
+    if(isset($mapping)) {
+      // value is explicitly ignored with a null mapping
+      if($mapping === null) {
+        return null;
+      }
     }
-    // prepend base to term
     else {
-      $term = $this->_prependBase($base, $term);
+      $mapping = null;
     }
 
-    return $term;
+    // term dependency cannot be a property generator
+    if($local_ctx !== null && $mapping &&
+      $mapping->propertyGenerator) {
+      throw new JsonLdException(
+        'Invalid JSON-LD syntax; a term definition cannot have a property ' .
+        'generator as a dependency.',
+        'jsonld.SyntaxError',
+        array('context' => $local_ctx, 'value' => $value));
+    }
+
+    $is_absolute = false;
+    $rval = $value;
+
+    // value is a term
+    if($mapping && !$mapping->propertyGenerator) {
+      $is_absolute = true;
+      $rval = $mapping->{'@id'};
+    }
+
+    // keywords need no expanding (aliasing already handled by now)
+    if(self::_isKeyword($rval)) {
+      return $rval;
+    }
+
+    if(!$is_absolute) {
+      // split value into prefix:suffix
+      $colon = strpos($rval, ':');
+      if($colon !== false) {
+        $is_absolute = true;
+        $prefix = substr($rval, 0, $colon);
+        $suffix = substr($rval, $colon + 1);
+
+        // do not expand blank nodes (prefix of '_') or already-absolute
+        // IRIs (suffix of '//')
+        if($prefix !== '_' && strpos($suffix, '//') !== 0) {
+          // prefix dependency not defined, define it
+          if($local_ctx !== null && property_exists($local_ctx, $prefix) &&
+            !self::_hasKeyValue($defined, $prefix, true)) {
+            $this->_createTermDefinition(
+              $active_ctx, $local_ctx, $prefix, $defined);
+          }
+
+          // use mapping if prefix is defined and not a property generator
+          if(property_exists($active_ctx->mappings, $prefix)) {
+            $mapping = $active_ctx->mappings->{$prefix};
+            if($mapping && !$mapping->propertyGenerator) {
+              $rval = $active_ctx->mappings->{$prefix}->{'@id'} . $suffix;
+            }
+          }
+        }
+      }
+    }
+
+    if($is_absolute) {
+      // rename blank node if requested
+      if(!$local_ctx && strpos($rval, '_:') === 0 &&
+        $active_ctx->namer !== null) {
+        $rval = $active_ctx->namer->getName($rval);
+      }
+    }
+    // prepend vocab
+    else if(isset($relative_to['vocab']) && $relative_to['vocab'] &&
+      property_exists($active_ctx, '@vocab')) {
+      $rval = $active_ctx->{'@vocab'} . $rval;
+    }
+    // prepend base
+    else if(isset($relative_to['base']) && $relative_to['base']) {
+      $rval = jsonld_prepend_base($active_ctx->{'@base'}, $rval);
+    }
+
+    if($local_ctx) {
+      // value must now be an absolute IRI
+      if(!self::_isAbsoluteIri($rval)) {
+        throw new JsonLdException(
+          'Invalid JSON-LD syntax; a @context value does not expand to ' .
+          'an absolute IRI.',
+          'jsonld.SyntaxError',
+          array('context' => $local_ctx, 'value' => $value));
+      }
+    }
+
+    return $rval;
   }
 
   /**
@@ -3631,7 +4349,7 @@ class JsonLdProcessor {
           $length = count($v);
           for($i = 0; $i < $length; ++$i) {
             if(is_string($v[$i])) {
-              $url = jsonld_to_absolute_url($v[$i], $base);
+              $url = jsonld_prepend_base($base, $v[$i]);
               // replace w/@context if requested
               if($replace) {
                 $ctx = $urls->{$url};
@@ -3654,7 +4372,7 @@ class JsonLdProcessor {
         }
         // string @context
         else if(is_string($v)) {
-          $v = jsonld_to_absolute_url($v, $base);
+          $v = jsonld_prepend_base($base, $v);
           // replace w/@context if requested
           if($replace) {
             $input->{$k} = $urls->{$v};
@@ -3768,24 +4486,20 @@ class JsonLdProcessor {
   }
 
   /**
-   * Prepends a base IRI to the given relative IRI.
-   *
-   * @param string $base the base IRI.
-   * @param string $iri the relative IRI.
-   *
-   * @return string the absolute IRI.
-   */
-  protected function _prependBase($base, $iri) {
-    return jsonld_prepend_base($base, $iri);
-  }
-
-  /**
    * Gets the initial context.
+   *
+   * @param assoc $options the options to use.
+   *          base the document base IRI.
    *
    * @return stdClass the initial context.
    */
-  protected function _getInitialContext() {
+  protected function _getInitialContext($options) {
+    $namer = null;
+    if(isset($options['renameBlankNodes']) && $options['renameBlankNodes']) {
+      $namer = new UniqueNamer('_:t');
+    }
     return (object)array(
+      '@base' => jsonld_parse_url($options['base']),
       'mappings' => new stdClass(),
       'keywords' => (object)array(
         '@context' => array(),
@@ -3795,6 +4509,7 @@ class JsonLdProcessor {
         '@explicit' => array(),
         '@graph' => array(),
         '@id' => array(),
+        '@index' => array(),
         '@language' => array(),
         '@list' => array(),
         '@omitDefault' => array(),
@@ -3802,8 +4517,161 @@ class JsonLdProcessor {
         '@set' => array(),
         '@type' => array(),
         '@value' => array(),
-        '@vocab' => array()
-      ));
+        '@vocab' => array()),
+      'namer' => $namer,
+      'inverse' => null);
+  }
+
+  /**
+   * Generates an inverse context for use in the compaction algorithm, if
+   * not already generated for the given active context.
+   *
+   * @param stdClass $active_ctx the active context to use.
+   *
+   * @return stdClass the inverse context.
+   */
+  protected function _getInverseContext($active_ctx) {
+    $inverse = $active_ctx->inverse = new stdClass();
+
+    // handle default language
+    $default_language = '@none';
+    if(property_exists($active_ctx, '@language')) {
+      $default_language = $active_ctx->{'@language'};
+    }
+
+    // create term selections for each mapping in the context, ordered by
+    // shortest and then lexicographically least
+    $mappings = $active_ctx->mappings;
+    $terms = array_keys((array)$mappings);
+    usort($terms, array($this, '_compareShortestLeast'));
+    foreach($terms as $term) {
+      $mapping = $mappings->{$term};
+      if($mapping === null) {
+        continue;
+      }
+
+      // iterate over every IRI in the mapping
+      $iris = $mapping->{'@id'};
+      $iris = self::arrayify($iris);
+      foreach($iris as $iri) {
+        // initialize container map
+        if(!property_exists($inverse, $iri)) {
+          $inverse->{$iri} = new stdClass();
+        }
+        $container_map = $inverse->{$iri};
+
+        // add term selection where it applies
+        if(property_exists($mapping, '@container')) {
+          $container = $mapping->{'@container'};
+        }
+        else {
+          $container = '@none';
+        }
+
+        // add new entry
+        if(!property_exists($container_map, $container)) {
+          $container_map->{$container} = (object)array(
+            '@language' => new stdClass(),
+            '@type' => new stdClass());
+          $container_map->{$container}->{'@language'}->{$default_language} =
+            (object)array('term' => null, 'propertyGenerators' => array());
+        }
+        $entry = $container_map->{$container};
+
+        // consider updating @language entry if @type is not specified
+        if(!property_exists($mapping, '@type')) {
+          // if a @language is specified, update its specific entry
+          if(property_exists($mapping, '@language')) {
+            $language = $mapping->{'@language'};
+            if($language === null) {
+              $language = '@null';
+            }
+            $this->_addPreferredTerm(
+              $mapping, $term, $entry->{'@language'}, $language);
+          }
+          // add an entry for the default language and for no @language
+          else {
+            $this->_addPreferredTerm(
+              $mapping, $term, $entry->{'@language'}, $default_language);
+            $this->_addPreferredTerm(
+              $mapping, $term, $entry->{'@language'}, '@none');
+          }
+        }
+
+        // consider updating @type entry if @language is not specified
+        if(!property_exists($mapping, '@language')) {
+          if(property_exists($mapping, '@type')) {
+            $type = $mapping->{'@type'};
+          }
+          else {
+            $type = '@none';
+          }
+          $this->_addPreferredTerm($mapping, $term, $entry->{'@type'}, $type);
+        }
+      }
+    }
+
+    return $inverse;
+  }
+
+  /**
+   * Adds or updates the term or property generator for the given entry.
+   *
+   * @param stdClass $mapping the term mapping.
+   * @param string $term the term to add.
+   * @param stdClass $entry the inverse context type_or_language entry to
+   *          add to.
+   * @param string $type_or_language_value the key in the entry to add to.
+   */
+  function _addPreferredTerm($mapping, $term, $entry, $type_or_language_value) {
+    if(!property_exists($entry, $type_or_language_value)) {
+      $entry->{$type_or_language_value} = (object)array(
+        'term' => null, 'propertyGenerators' => array());
+    }
+
+    $e = $entry->{$type_or_language_value};
+    if($mapping->propertyGenerator) {
+      $e->propertyGenerators[] = $term;
+    }
+    else if($e->term === null) {
+      $e->term = $term;
+    }
+  }
+
+  /**
+   * Clones an active context, creating a child active context.
+   *
+   * @return stdClass a clone (child) of the active context.
+   */
+  protected function _cloneActiveContext($active_ctx) {
+    $child = new stdClass();
+    $child->{'@base'} = $active_ctx->{'@base'};
+    $child->keywords = self::copy($active_ctx->keywords);
+    $child->mappings = self::copy($active_ctx->mappings);
+    $child->namer = $active_ctx->namer;
+    $child->inverse = null;
+    return $child;
+  }
+
+  /**
+   * Returns a copy of this active context that can be shared between
+   * different processing algorithms. This method only copies the parts
+   * of the active context that can't be shared.
+   *
+   * @param stdClass $active_ctx the active context to use.
+   *
+   * @return stdClass a shareable copy of the active context.
+   */
+  public function _shareActiveContext($active_ctx) {
+    $rval = new stdClass();
+    $rval->{'@base'} = $active_ctx->{'@base'};
+    $rval->keywords = $active_ctx->keywords;
+    $rval->mappings = $active_ctx->mappings;
+    if($active_ctx->namer !== null) {
+      $rval->namer = clone $active_ctx->namer;
+    }
+    $rval->inverse = $active_ctx->inverse;
+    return $rval;
   }
 
   /**
@@ -3867,7 +4735,7 @@ class JsonLdProcessor {
   protected static function _appendUniqueRdfStatement(
     &$statements, $statement) {
     foreach($statements as $s) {
-      if(JsonLdProcessor::_compareRdfStatements($s, $statement)) {
+      if(self::_compareRdfStatements($s, $statement)) {
         return;
       }
     }
@@ -3875,43 +4743,34 @@ class JsonLdProcessor {
   }
 
   /**
-   * Returns whether or not the given value is a keyword (or a keyword alias).
+   * Returns whether or not the given value is a keyword.
    *
    * @param string $v the value to check.
-   * @param stdClass [$ctx] the active context to check against.
    *
    * @return bool true if the value is a keyword, false if not.
    */
-  protected static function _isKeyword($v, $ctx=null) {
-    if($ctx !== null) {
-      if(property_exists($ctx->keywords, $v)) {
-        return true;
-      }
-      foreach($ctx->keywords as $kw => $aliases) {
-        if(in_array($v, $aliases) !== false) {
-          return true;
-        }
-      }
+  protected static function _isKeyword($v) {
+    if(!is_string($v)) {
+      return false;
     }
-    else {
-      switch($v) {
-      case '@context':
-      case '@container':
-      case '@default':
-      case '@embed':
-      case '@explicit':
-      case '@graph':
-      case '@id':
-      case '@language':
-      case '@list':
-      case '@omitDefault':
-      case '@preserve':
-      case '@set':
-      case '@type':
-      case '@value':
-      case '@vocab':
-        return true;
-      }
+    switch($v) {
+    case '@context':
+    case '@container':
+    case '@default':
+    case '@embed':
+    case '@explicit':
+    case '@graph':
+    case '@id':
+    case '@index':
+    case '@language':
+    case '@list':
+    case '@omitDefault':
+    case '@preserve':
+    case '@set':
+    case '@type':
+    case '@value':
+    case '@vocab':
+      return true;
     }
     return false;
   }
@@ -3933,18 +4792,18 @@ class JsonLdProcessor {
    * @param mixed $v the value to check.
    */
   protected static function _validateTypeValue($v) {
-    // must be a string, subject reference, or empty object
-    if(is_string($v) || self::_isSubjectReference($v) ||
-      self::_isEmptyObject($v)) {
+    // must be a string or empty object
+    if(is_string($v) || self::_isEmptyObject($v)) {
       return;
     }
 
     // must be an array
     $is_valid = false;
     if(is_array($v)) {
+      // must contain only strings
       $is_valid = true;
       foreach($v as $e) {
-        if(!(is_string($e) || self::_isSubjectReference($e))) {
+        if(!(is_string($e))) {
           $is_valid = false;
           break;
         }
@@ -3953,7 +4812,7 @@ class JsonLdProcessor {
 
     if(!$is_valid) {
       throw new JsonLdException(
-        'Invalid JSON-LD syntax; "@type" value must a string, an array ' +
+        'Invalid JSON-LD syntax; "@type" value must a string, an array ' .
         'of strings, or an empty object.',
         'jsonld.SyntaxError', array('value' => $v));
     }
@@ -4061,6 +4920,39 @@ class JsonLdProcessor {
    */
   protected static function _isAbsoluteIri($v) {
     return strpos($v, ':') !== false;
+  }
+
+  /**
+   * Returns true if the given target has the given key and its
+   * value equals is the given value.
+   *
+   * @param stdClass $target the target object.
+   * @param string key the key to check.
+   * @param mixed $value the value to check.
+   *
+   * @return bool true if the target has the given key and its value matches.
+   */
+  // FIXME: use this function throughout processor, check for "property_exists"
+  protected static function _hasKeyValue($target, $key, $value) {
+    return (property_exists($target, $key) && $target->{$key} === $value);
+  }
+
+  /**
+   * Returns true if both of the given objects have the same value for the
+   * given key or if neither of the objects contain the given key.
+   *
+   * @param stdClass $o1 the first object.
+   * @param stdClass $o2 the second object.
+   * @param string key the key to check.
+   *
+   * @return bool true if both objects have the same value for the key or
+   *   neither has the key.
+   */
+  protected static function _compareKeyValues($o1, $o2, $key) {
+    if(property_exists($o1, $key)) {
+      return property_exists($o2, $key) && $o1->{$key} === $o2->{$key};
+    }
+    return !property_exists($o2, $key);
   }
 }
 
@@ -4237,6 +5129,68 @@ class Permutator {
     }
 
     return $rval;
+  }
+}
+
+/**
+ * An ActiveContextCache caches active contexts so they can be reused without
+ * the overhead of recomputing them.
+ */
+class ActiveContextCache {
+  /**
+   * Constructs a new ActiveContextCache.
+   *
+   * @param int size the maximum size of the cache, defaults to 100.
+   */
+  public function __construct($size=100) {
+    $this->order = array();
+    $this->cache = new stdClass();
+    $this->size = $size;
+  }
+
+  /**
+   * Gets an active context from the cache based on the current active
+   * context and the new local context.
+   *
+   * @param stdClass $active_ctx the current active context.
+   * @param stdClass $local_ctx the new local context.
+   *
+   * @return mixed a shared copy of the cached active context or null.
+   */
+  public function get($active_ctx, $local_ctx) {
+    $key1 = serialize($active_ctx);
+    $key2 = serialize($local_ctx);
+    if(property_exists($this->cache, $key1)) {
+      $level1 = $this->cache->{$key1};
+      if(property_exists($level1, $key2)) {
+        // get shareable copy of cached active context
+        return JsonLdProcessor::_shareActiveContext($level1->{$key2});
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Sets an active context in the cache based on the previous active
+   * context and the just-processed local context.
+   *
+   * @param stdClass $active_ctx the previous active context.
+   * @param stdClass $local_ctx the just-processed local context.
+   * @param stdClass $result the resulting active context.
+   */
+  public function set($active_ctx, $local_ctx, $result) {
+    if(count($this->order) === $this->size) {
+      $entry = array_shift($this->order);
+      unset($this->cache->{$entry->activeCtx}->{$entry->localCtx});
+    }
+    $key1 = serialize($active_ctx);
+    $key2 = serialize($local_ctx);
+    $this->order[] = (object)array(
+      'activeCtx' => $key1, 'localCtx' => $key2);
+    if(!property_exists($this->cache)) {
+      $this->cache->{$key1} = new stdClass();
+    }
+    $this->cache->{$key1}->{$key2} = $result;
   }
 }
 
