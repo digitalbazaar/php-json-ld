@@ -282,10 +282,18 @@ function jsonld_parse_url($url) {
  * @return string the absolute IRI.
  */
 function jsonld_prepend_base($base, $iri) {
+  // already an absolute IRI
+  if(strpos($iri, ':') !== false) {
+    return $iri;
+  }
+
   if(is_string($base)) {
     $base = jsonld_parse_url($base);
   }
   $authority = $base['host'];
+  if(isset($base['port'])) {
+    $authority .= ":{$base['port']}";
+  }
   $rel = jsonld_parse_url($iri);
 
   // per RFC3986 normalize slashes and dots in path
@@ -352,13 +360,19 @@ function jsonld_prepend_base($base, $iri) {
 
   // add query and hash
   if(isset($rel['query'])) {
-    $path .= '?' . $rel['query'];
+    $path .= "?{$rel['query']}";
   }
   if(isset($rel['fragment'])) {
-    $path .= '#' . $rel['fragment'];
+    $path .= "#{$rel['fragment']}";
   }
 
-  return $base['scheme'] . "://$authority$path";
+  $absolute_iri = "{$base['scheme']}://";
+  if(isset($base['user']) || isset($base['pass'])) {
+    $absolute_iri .= "{$base['user']}:{$base['pass']}@";
+  }
+  $absolute_iri .= "$authority$path";
+
+  return $absolute_iri;
 }
 
 /**
