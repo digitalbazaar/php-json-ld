@@ -449,14 +449,18 @@ class JsonLdProcessor {
     // do compaction
     $compacted = $this->_compact($active_ctx, null, $expanded, $options);
 
-    // if compacted is an array with 1 entry, remove array unless
-    // graph option is set
-    if($options['graph'] !== true &&
-      is_array($compacted) && count($compacted) === 1) {
-      $compacted = $compacted[0];
+    if(!$options['graph'] && is_array($compacted)) {
+      // simplify to a single item
+      if(count($compacted) === 1) {
+        $compacted = $compacted[0];
+      }
+      // simplify to an empty object
+      else if(count($compacted) === 0) {
+        $compacted = new stdClass();
+      }
     }
     // always use array if graph option is on
-    else if($options['graph'] === true) {
+    else if($options['graph']) {
       $compacted = self::arrayify($compacted);
     }
 
@@ -1535,13 +1539,13 @@ class JsonLdProcessor {
 
           // handle @list
           if($is_list) {
-            // ensure $list value is an array
+            // ensure @list value is an array
             $compacted_item = self::arrayify($compacted_item);
 
             if($container !== '@list') {
               // wrap using @list alias
               $compacted_item = (object)array(
-                $this->_compactIri($active_ctx, '@list'), $compacted_item);
+                $this->_compactIri($active_ctx, '@list') => $compacted_item);
 
               // include @index from expanded @list, if any
               if(property_exists($expanded_item, '@index')) {
@@ -3739,8 +3743,12 @@ class JsonLdProcessor {
             break;
           }
         }
-        $common_language = $common_language || '@none';
-        $common_type = $common_type || '@none';
+        if($common_language === null) {
+          $common_language = '@none';
+        }
+        if($common_type === null) {
+          $common_type = '@none';
+        }
         if($common_type !== '@none') {
           $type_or_language = '@type';
           $type_or_language_value = $common_type;
