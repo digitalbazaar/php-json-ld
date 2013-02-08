@@ -271,6 +271,7 @@ function jsonld_parse_url($url) {
   else if(!isset($rval['path'])) {
     $rval['path'] = '';
   }
+  return $rval;
 }
 
 /**
@@ -287,7 +288,6 @@ function jsonld_prepend_base($base, $iri) {
   }
   $authority = $base['host'];
   $rel = jsonld_parse_url($iri);
-  print_r($rel);
 
   // per RFC3986 normalize slashes and dots in path
 
@@ -297,7 +297,7 @@ function jsonld_prepend_base($base, $iri) {
     $authority = substr($path, 0, strrpos($path, '/'));
     $path = substr($path, strlen($authority));
   }
-  // IRI represents an absolue path
+  // IRI represents an absolute path
   else if(strpos($rel['path'], '/') === 0) {
     $path = $rel['path'];
   }
@@ -308,20 +308,20 @@ function jsonld_prepend_base($base, $iri) {
     if($rel['path'] !== '') {
       $idx = strrpos($path, '/');
       $idx = ($idx === false) ? 0 : $idx + 1;
-      $path = substr($path, 0, $idx) + $rel['path'];
+      $path = substr($path, 0, $idx) . $rel['path'];
     }
   }
 
-  $segments = explode($path, '/');
+  $segments = explode('/', $path);
 
   // remove '.' and '' (do not remove trailing empty path)
-  $idx = 0;
+  $idx = -1;
   $end = count($segments) - 1;
-  $filter = function($e) use ($idx, $end) {
+  $filter = function($e) use (&$idx, $end) {
     $idx += 1;
     return $e !== '.' && ($e !== '' || $idx === $end);
   };
-  $segments = array_filter($segments, $filter);
+  $segments = array_values(array_filter($segments, $filter));
 
   // remove as many '..' as possible
   for($i = 0; $i < count($segments);) {
@@ -341,6 +341,7 @@ function jsonld_prepend_base($base, $iri) {
 
       // remove '..' and previous segment
       array_splice($segments, $i - 1, 2);
+      $segments = array_values($segments);
       $i -= 1;
     }
     else {
@@ -348,14 +349,14 @@ function jsonld_prepend_base($base, $iri) {
     }
   }
 
-  $path = '/' . implode(',', $segments);
+  $path = '/' . implode('/', $segments);
 
   // add query and hash
   if(isset($rel['query'])) {
     $path .= '?' . $rel['query'];
   }
-  if(isset($rel['hash'])) {
-    $path .= '#' . $rel['hash'];
+  if(isset($rel['fragment'])) {
+    $path .= '#' . $rel['fragment'];
   }
 
   return $base['scheme'] . "://$authority$path";
@@ -472,7 +473,7 @@ class JsonLdProcessor {
     $tmp = $ctx;
     $ctx = array();
     foreach($tmp as $v) {
-      if(!is_object($v) || count(get_object_vars($v)) > 0) {
+      if(!is_object($v) || count(array_keys((array)$v)) > 0) {
         $ctx[] = $v;
       }
     }
@@ -1012,7 +1013,7 @@ class JsonLdProcessor {
       return !self::compareValues($e, $value);
     };
     $values = self::getValues($subject, $property);
-    $values = array_filter($values, $filter);
+    $values = array_values(array_filter($values, $filter));
 
     if(count($values) === 0) {
       self::removeProperty($subject, $property);
@@ -1062,10 +1063,12 @@ class JsonLdProcessor {
       }
       $list1 = $v1->{'@list'};
       $list2 = $v2->{'@list'};
-      if(count($list1) !== count($list2)) {
+      $count_list1 = count($list1);
+      $count_list2 = count($list2);
+      if($count_list1 !== $count_list2) {
         return false;
       }
-      for($i = 0; $i < count($list1); ++$i) {
+      for($i = 0; $i < $count_list1; ++$i) {
         if(!self::compareValues($list1[$i], $list2[$i])) {
           return false;
         }
@@ -1664,7 +1667,7 @@ class JsonLdProcessor {
       foreach($keys as $key) {
         $value = $element->{$key};
 
-        // expand key using property generator
+        // get term definition for key
         if(property_exists($active_ctx->mappings, $key)) {
           $mapping = $active_ctx->mappings->{$key};
         }
@@ -1672,6 +1675,7 @@ class JsonLdProcessor {
           $mapping = null;
         }
 
+        // expand key using property generator
         if($mapping && $mapping->propertyGenerator) {
           $expanded_property = $mapping->{'@id'};
         }
@@ -2609,7 +2613,8 @@ class JsonLdProcessor {
    */
   protected function _labelBlankNodes($namer, $element, $is_id=false) {
     if(is_array($element)) {
-      for($i = 0; $i < count($element); ++$i) {
+      $length = count($element);
+      for($i = 0; $i < $length; ++$i) {
         $element[$i] = $this->_labelBlankNodes($namer, $element[$i], $is_id);
       }
     }
@@ -3942,7 +3947,8 @@ class JsonLdProcessor {
       if($iri === $expanded_property) {
         continue;
       }
-      for($pi = 0; $pi < count($element->{$iri}); ++$pi) {
+      $length = count($element->{$iri});
+      for($pi = 0; $pi < $length; ++$pi) {
         if(self::compareValues($element->{$iri}[$pi], $value)) {
           // duplicate found, remove it in place
           array_splice($element->{$iri}, $pi, 1);
@@ -4005,7 +4011,7 @@ class JsonLdProcessor {
       $kw = $active_ctx->mappings->{$term}->{'@id'};
       if(self::_isKeyword($kw)) {
         array_splice($active_ctx->keywords->{$kw},
-          in_array($term, $active_ctx->keywords->{$kw}), 1);
+          array_search($term, $active_ctx->keywords->{$kw}), 1);
       }
     }
 
@@ -4226,9 +4232,7 @@ class JsonLdProcessor {
 
     if(property_exists($active_ctx->mappings, $value)) {
       $mapping = $active_ctx->mappings->{$value};
-    }
 
-    if(isset($mapping)) {
       // value is explicitly ignored with a null mapping
       if($mapping === null) {
         return null;
@@ -4239,8 +4243,7 @@ class JsonLdProcessor {
     }
 
     // term dependency cannot be a property generator
-    if($local_ctx !== null && $mapping &&
-      $mapping->propertyGenerator) {
+    if($local_ctx !== null && $mapping && $mapping->propertyGenerator) {
       throw new JsonLdException(
         'Invalid JSON-LD syntax; a term definition cannot have a property ' .
         'generator as a dependency.',
