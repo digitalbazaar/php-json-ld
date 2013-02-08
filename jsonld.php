@@ -1750,7 +1750,7 @@ class JsonLdProcessor {
         // handle index container (skip if value is not an object)
         else if($container === '@index' && is_object($value)) {
           $expand_index_map = function($active_property) use (
-            $active_ctx, $active_property, $options, $value) {
+            $active_ctx, $options, $value) {
             $rval = array();
             $keys = array_keys((array)$value);
             sort($keys);
@@ -1779,7 +1779,7 @@ class JsonLdProcessor {
               $next_active_property = null;
             }
             $expanded_value = $this->_expand(
-              $active_ctx, $active_property, $value, $options, $is_list);
+              $active_ctx, $next_active_property, $value, $options, $is_list);
             if($is_list && self::_isList($expanded_value)) {
               throw new JsonLdException(
                 'Invalid JSON-LD syntax; lists of lists are not permitted.',
