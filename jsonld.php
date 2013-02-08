@@ -167,8 +167,7 @@ global $jsonld_cache;
 $jsonld_cache = new stdClass();
 
 /** The default active context cache. */
-// FIXME: turn on
-//$jsonld_cache->activeCtx = new ActiveContextCache();
+$jsonld_cache->activeCtx = new ActiveContextCache();
 
 /** The default JSON-LD URL resolver. */
 global $jsonld_default_url_resolver;
@@ -1963,7 +1962,6 @@ class JsonLdProcessor {
       if(!property_exists($subject, '@graph')) {
         $subject->{'@graph'} = array();
       }
-      $nodeMap = $graphs->{$graph_name};
       $ids = array_keys((array)$node_map);
       sort($ids);
       foreach($ids as $id) {
@@ -1999,17 +1997,16 @@ class JsonLdProcessor {
         '@merged' => new stdClass()));
 
     // produce a map of all graphs and name each bnode
-    $namer = new UniqueNamer('_:t');
-    $this->_flatten($input, $state->graphs, '@default', $namer, null, null);
-    $namer = new UniqueNamer('_:t');
-    $this->_flatten($input, $state->graphs, '@merged', $namer, null, null);
     // FIXME: currently uses subjects from @merged graph only
+    $namer = new UniqueNamer('_:t');
+    $this->_createNodeMap($input, $state->graphs, '@merged', $namer);
     $state->subjects = $state->graphs->{'@merged'};
 
     // frame the subjects
     $framed = new ArrayObject();
-    $this->_matchFrame(
-      $state, array_keys((array)$state->subjects), $frame, $framed, null);
+    $keys = array_keys((array)$state->subjects);
+    sort($keys);
+    $this->_matchFrame($state, $keys, $frame, $framed, null);
     return (array)$framed;
   }
 
@@ -2827,7 +2824,7 @@ class JsonLdProcessor {
     }
 
     // add non-object to list
-    if(!is_object($input) || self::_isValue($input)) {
+    if(!is_object($input)) {
       if($list !== null) {
         $list[] = $input;
       }
@@ -2907,7 +2904,7 @@ class JsonLdProcessor {
         continue;
       }
 
-      // iterate over objects
+      // iterate over objects (ensure property is added for empty arrays)
       $objects = $input->{$property};
       if(count($objects) === 0) {
         self::addValue(
@@ -3101,7 +3098,8 @@ class JsonLdProcessor {
             if(property_exists($next, '@default')) {
               $preserve = self::copy($next->{'@default'});
             }
-            $output->{$prop} = (object)array('@preserve' => $preserve);
+            $preserve = self::arrayify($preserve);
+            $output->{$prop} = array((object)array('@preserve' => $preserve));
           }
         }
 
@@ -4943,7 +4941,6 @@ class JsonLdProcessor {
    *
    * @return bool true if the target has the given key and its value matches.
    */
-  // FIXME: use this function throughout processor, check for "property_exists"
   protected static function _hasKeyValue($target, $key, $value) {
     return (property_exists($target, $key) && $target->{$key} === $value);
   }
@@ -5198,7 +5195,7 @@ class ActiveContextCache {
     $key2 = serialize($local_ctx);
     $this->order[] = (object)array(
       'activeCtx' => $key1, 'localCtx' => $key2);
-    if(!property_exists($this->cache)) {
+    if(!property_exists($this->cache, $key1)) {
       $this->cache->{$key1} = new stdClass();
     }
     $this->cache->{$key1}->{$key2} = $result;

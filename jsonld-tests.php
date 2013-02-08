@@ -173,10 +173,14 @@ class TestRunner {
     echo $line;
   }
 
-  public function check($test, $expect, $result) {
+  public function check($test, $expect, $result, $compare_json) {
     global $eol;
 
-    if(deep_compare($expect, $result)) {
+    $json_equal = true;
+    if($compare_json) {
+      $json_equal = (json_encode($expect) === json_encode($result));
+    }
+    if($json_equal || deep_compare($expect, $result)) {
       $this->passed += 1;
       echo "PASS$eol";
     }
@@ -257,6 +261,7 @@ class TestRunner {
       foreach($manifest->sequence as $test) {
         // read test input files
         $type = $test->{'@type'};
+        $compare_json = true;
         $options = array(
           'base' => 'http://json-ld.org/test-suite/tests/' . $test->input);
 
@@ -311,6 +316,7 @@ class TestRunner {
             $test->expect = read_test_nquads($test->expect, $filepath);
             $options['format'] = 'application/nquads';
             $result = jsonld_to_rdf($input, $options);
+            $compare_json = false;
           }
           else {
             echo "Skipping test \"{$test->name}\" of type: " .
@@ -319,7 +325,7 @@ class TestRunner {
           }
 
           // check results
-          $this->check($test, $test->expect, $result);
+          $this->check($test, $test->expect, $result, $compare_json);
         }
         catch(JsonLdException $e) {
           echo $eol . $e;
