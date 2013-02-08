@@ -267,8 +267,14 @@ function jsonld_parse_url($url) {
       $rval['path'] = '/';
     }
   }
-  else if(!isset($rval['path'])) {
-    $rval['path'] = '';
+  else {
+    $rval['host'] = '';
+    if(!isset($rval['path'])) {
+      $rval['path'] = '';
+    }
+  }
+  if(!isset($rval['scheme'])) {
+    $rval['scheme'] = '';
   }
   return $rval;
 }
