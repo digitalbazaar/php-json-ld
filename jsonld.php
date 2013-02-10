@@ -3986,7 +3986,7 @@ class JsonLdProcessor {
       $length = count($element->{$iri});
 
       // handle empty array case
-      if($length === 0 && is_array($value) && count($value) === 0) {
+      if(is_array($value) && count($value) === 0) {
         $rval = true;
         if($remove) {
           unset($element->{$iri});
