@@ -4147,18 +4147,16 @@ class JsonLdProcessor {
         $property_generator = array();
         $ids = $id;
         foreach($ids as $id) {
-          if(!is_string($id)) {
+          if(!is_string($id) || $id === '@type') {
             throw new JsonLdException(
               'Invalid JSON-LD syntax; property generators must consist of ' .
-              'an @id array containing only strings.',
+              'an @id array containing only strings and no string can be ' .
+              '"@type".',
               'jsonld.SyntaxError', array('context' => $local_ctx));
           }
-          // expand @id if it is not @type
-          if($id !== '@type') {
-            $id = $this->_expandIri(
-              $active_ctx, $id, array('base' => true), $local_ctx, $defined);
-          }
-          $property_generator[] = $id;
+          // expand @id
+          $property_generator[] = $this->_expandIri(
+            $active_ctx, $id, array('base' => true), $local_ctx, $defined);
         }
         // add sorted property generator as @id in mapping
         sort($property_generator);
@@ -4172,13 +4170,9 @@ class JsonLdProcessor {
           'jsonld.SyntaxError', array('context' => $local_ctx));
       }
       else {
-        // add @id to mapping, expanding it if it is not @type
-        if($id !== '@type') {
-          // expand @id to full IRI
-          $id = $this->_expandIri(
-            $active_ctx, $id, array('base' => true), $local_ctx, $defined);
-        }
-        $mapping->{'@id'} = $id;
+        // add @id to mapping
+        $mapping->{'@id'} = $this->_expandIri(
+          $active_ctx, $id, array('base' => true), $local_ctx, $defined);
       }
     }
     else {
