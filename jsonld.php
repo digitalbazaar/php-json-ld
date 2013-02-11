@@ -2659,8 +2659,7 @@ class JsonLdProcessor {
       sort($keys);
       foreach($keys as $key) {
         if($key !== '@id') {
-          $element->{$key} = $this->_labelBlankNodes(
-            $namer, $element->{$key}, $key === '@type');
+          $element->{$key} = $this->_labelBlankNodes($namer, $element->{$key});
         }
       }
     }
