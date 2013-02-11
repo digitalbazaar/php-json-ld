@@ -4601,6 +4601,14 @@ class JsonLdProcessor {
         continue;
       }
 
+      // add term selection where it applies
+      if(property_exists($mapping, '@container')) {
+        $container = $mapping->{'@container'};
+      }
+      else {
+        $container = '@none';
+      }
+
       // iterate over every IRI in the mapping
       $iris = $mapping->{'@id'};
       $iris = self::arrayify($iris);
@@ -4610,14 +4618,6 @@ class JsonLdProcessor {
           $inverse->{$iri} = new stdClass();
         }
         $container_map = $inverse->{$iri};
-
-        // add term selection where it applies
-        if(property_exists($mapping, '@container')) {
-          $container = $mapping->{'@container'};
-        }
-        else {
-          $container = '@none';
-        }
 
         // add new entry
         if(!property_exists($container_map, $container)) {
