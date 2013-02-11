@@ -2502,6 +2502,7 @@ class JsonLdProcessor {
     if(property_exists($jsonld_cache, 'activeCtx')) {
       $rval = $jsonld_cache->activeCtx->get($active_ctx, $local_ctx);
       if($rval) {
+        $rval->namer = $active_ctx->namer;
         return $rval;
       }
     }
@@ -4729,7 +4730,7 @@ class JsonLdProcessor {
     $rval->keywords = $active_ctx->keywords;
     $rval->mappings = $active_ctx->mappings;
     if($active_ctx->namer !== null) {
-      $rval->namer = clone $active_ctx->namer;
+      $rval->namer = new UniqueNamer('_:t');
     }
     $rval->inverse = $active_ctx->inverse;
     return $rval;
