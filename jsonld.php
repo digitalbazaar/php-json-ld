@@ -3736,7 +3736,7 @@ class JsonLdProcessor {
               $item_language = '@null';
             }
           }
-          else if(is_object($value)) {
+          else {
             $item_type = '@id';
           }
           if($common_language === null) {
@@ -3783,7 +3783,7 @@ class JsonLdProcessor {
             $type_or_language_value = $value->{'@type'};
           }
         }
-        else if(is_object($value)) {
+        else {
           $type_or_language = '@type';
           $type_or_language_value = '@id';
         }
