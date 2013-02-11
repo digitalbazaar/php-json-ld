@@ -1477,14 +1477,14 @@ class JsonLdProcessor {
           if(is_string($expanded_value)) {
             $compacted_value = $this->_compactIri(
               $active_ctx, $expanded_value, null, array(
-                'base' => true, 'vocab' => ($expanded_property === '@type')));
+                'vocab' => ($expanded_property === '@type')));
           }
           // expanded value must be a @type array
           else {
             $compacted_value = array();
             foreach($expanded_value as $ev) {
               $compacted_value[] = $this->_compactIri(
-                $active_ctx, $ev, null, array('base' => true, 'vocab' => true));
+                $active_ctx, $ev, null, array('vocab' => true));
             }
           }
 
