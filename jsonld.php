@@ -2630,20 +2630,19 @@ class JsonLdProcessor {
    *
    * @param UniqueNamer $namer the UniqueNamer to use.
    * @param mixed $element the element with blank nodes to rename.
-   * @param bool $is_id true if the given element is an @id (or @type).
    *
    * @return mixed the element.
    */
-  protected function _labelBlankNodes($namer, $element, $is_id=false) {
+  protected function _labelBlankNodes($namer, $element) {
     if(is_array($element)) {
       $length = count($element);
       for($i = 0; $i < $length; ++$i) {
-        $element[$i] = $this->_labelBlankNodes($namer, $element[$i], $is_id);
+        $element[$i] = $this->_labelBlankNodes($namer, $element[$i]);
       }
     }
     else if(self::_isList($element)) {
       $element->{'@list'} = $this->_labelBlankNodes(
-        $namer, $element->{'@list'}, $is_id);
+        $namer, $element->{'@list'});
     }
     else if(is_object($element)) {
       // rename blank node
@@ -2664,10 +2663,6 @@ class JsonLdProcessor {
             $namer, $element->{$key}, $key === '@type');
         }
       }
-    }
-    // rename blank node identifier
-    else if(is_string($element) && $is_id && strpos($element, '_:') === 0) {
-      $element = $namer->getName($element);
     }
 
     return $element;
