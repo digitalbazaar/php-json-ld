@@ -1609,6 +1609,7 @@ class JsonLdProcessor {
             // array, or key is @graph
             $is_array = ($container === '@set' || $container === '@list' ||
               (is_array($compacted_item) && count($compacted_item) === 0) ||
+              $expanded_property === '@list' ||
               $expanded_property === '@graph');
 
             // add compact value
