@@ -4069,6 +4069,11 @@ class JsonLdProcessor {
     }
 
     if(is_string($value)) {
+      // expand value to a full IRI
+      $id = $this->_expandIri(
+        $active_ctx, $value, array('vocab' => true, 'base' => true),
+        $local_ctx, $defined);
+
       if(self::_isKeyword($value)) {
         // disallow aliasing @context and @preserve
         if($value === '@context' || $value === '@preserve') {
@@ -4084,15 +4089,10 @@ class JsonLdProcessor {
             array($this, '_compareShortestLeast'));
         }
       }
-      else {
-        // expand value to a full IRI
-        $value = $this->_expandIri(
-          $active_ctx, $value, array('base' => true), $local_ctx, $defined);
-      }
 
       // define/redefine term to expanded IRI/keyword
       $active_ctx->mappings->{$term} = (object)array(
-        '@id' => $value, 'propertyGenerator' => false);
+        '@id' => $id, 'propertyGenerator' => false);
       $defined->{$term} = true;
       return;
     }
@@ -4123,16 +4123,20 @@ class JsonLdProcessor {
         $property_generator = array();
         $ids = $id;
         foreach($ids as $id) {
-          if(!is_string($id) || $id === '@type') {
+          // expand @id
+          if(is_string($id)) {
+            $id = $this->_expandIri(
+              $active_ctx, $id, array('vocab' => true, 'base' => true),
+              $local_ctx, $defined);
+          }
+          if(!is_string($id) || self::_isKeyword($id)) {
             throw new JsonLdException(
               'Invalid JSON-LD syntax; property generators must consist of ' .
               'an @id array containing only strings and no string can be ' .
               '"@type".',
               'jsonld.SyntaxError', array('context' => $local_ctx));
           }
-          // expand @id
-          $property_generator[] = $this->_expandIri(
-            $active_ctx, $id, array('base' => true), $local_ctx, $defined);
+          $property_generator[] = $id;
         }
         // add sorted property generator as @id in mapping
         sort($property_generator);
@@ -4148,7 +4152,8 @@ class JsonLdProcessor {
       else {
         // add @id to mapping
         $mapping->{'@id'} = $this->_expandIri(
-          $active_ctx, $id, array('base' => true), $local_ctx, $defined);
+          $active_ctx, $id, array('vocab' => true, 'base' => true),
+          $local_ctx, $defined);
       }
     }
     else {
