@@ -4041,18 +4041,6 @@ class JsonLdProcessor {
     // now defining term
     $defined->{$term} = false;
 
-    // if term has a prefix, define it first
-    $colon = strpos($term, ':');
-    $prefix = null;
-    if($colon !== false) {
-      $prefix = substr($term, 0, $colon);
-      if(property_exists($local_ctx, $prefix)) {
-        // define parent prefix
-        $this->_createTermDefinition(
-          $active_ctx, $local_ctx, $prefix, $defined);
-      }
-    }
-
     if(self::_isKeyword($term)) {
       throw new JsonLdException(
         'Invalid JSON-LD syntax; keywords cannot be overridden.',
@@ -4060,12 +4048,12 @@ class JsonLdProcessor {
     }
 
     if(property_exists($active_ctx->mappings, $term) &&
-      $active_ctx->mappings->{$term} !== null) {
+        $active_ctx->mappings->{$term} !== null) {
       // if term is a keyword alias, remove it
       $kw = $active_ctx->mappings->{$term}->{'@id'};
       if(self::_isKeyword($kw)) {
         array_splice($active_ctx->keywords->{$kw},
-          array_search($term, $active_ctx->keywords->{$kw}), 1);
+        array_search($term, $active_ctx->keywords->{$kw}), 1);
       }
     }
 
@@ -4074,7 +4062,7 @@ class JsonLdProcessor {
 
     // clear context entry
     if($value === null || (is_object($value) &&
-      self::_hasKeyValue($value, '@id', null))) {
+        self::_hasKeyValue($value, '@id', null))) {
       $active_ctx->mappings->{$term} = null;
       $defined->{$term} = true;
       return;
@@ -4120,13 +4108,6 @@ class JsonLdProcessor {
     $mapping = new stdClass();
     $mapping->propertyGenerator = false;
 
-    // merge onto parent mapping if one exists for a prefix
-    if($prefix !== null &&
-      property_exists($active_ctx->mappings, $prefix) &&
-      $active_ctx->mappings->{$prefix} !== null) {
-      $mapping = self::copy($active_ctx->mappings->{$prefix});
-    }
-
     if(property_exists($value, '@id')) {
       $id = $value->{'@id'};
       // handle property generator
@@ -4171,8 +4152,30 @@ class JsonLdProcessor {
       }
     }
     else {
-      if($prefix === null) {
-        //   non-IRIs *must* define @ids if @vocab is not available
+      // see if the term has a prefix
+      $colon = strpos($term, ':');
+      if($colon !== false) {
+        $prefix = substr($term, 0, $colon);
+        if(property_exists($local_ctx, $prefix)) {
+          // define parent prefix
+          $this->_createTermDefinition(
+            $active_ctx, $local_ctx, $prefix, $defined);
+        }
+
+        // set @id based on prefix parent
+        if(property_exists($active_ctx->mappings, $prefix) &&
+          $active_ctx->mappings->{$prefix}) {
+          $suffix = substr($term, $colon + 1);
+          $mapping->{'@id'} = $active_ctx->mappings->{$prefix}->{'@id'} .
+            $suffix;
+        }
+        // term is an absolute IRI
+        else {
+          $mapping->{'@id'} = $term;
+        }
+      }
+      else {
+        // non-IRIs *must* define @ids if @vocab is not available
         if(!property_exists($active_ctx, '@vocab')) {
           throw new JsonLdException(
             'Invalid JSON-LD syntax; @context terms must define an @id.',
@@ -4181,15 +4184,6 @@ class JsonLdProcessor {
         }
         // prepend vocab to term
         $mapping->{'@id'} = $active_ctx->{'@vocab'} . $term;
-      }
-      // set @id based on prefix parent
-      else if(property_exists($active_ctx->mappings, $prefix)) {
-        $suffix = substr($term, $colon + 1);
-        $mapping->{'@id'} = $active_ctx->mappings->{$prefix}->{'@id'} . $suffix;
-      }
-      // term is an absolute IRI
-      else {
-        $mapping->{'@id'} = $term;
       }
     }
 
