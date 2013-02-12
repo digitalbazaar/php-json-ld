@@ -1679,7 +1679,6 @@ class JsonLdProcessor {
       // if element has a context, process it
       if(property_exists($element, '@context')) {
         $active_ctx = $this->_processContext($active_ctx, $element->{'@context'}, $options);
-        unset($element->{'@context'});
       }
 
       // expand the active property
@@ -1691,6 +1690,10 @@ class JsonLdProcessor {
       sort($keys);
       foreach($keys as $key) {
         $value = $element->{$key};
+
+        if($key === '@context') {
+          continue;
+        }
 
         // get term definition for key
         if(property_exists($active_ctx->mappings, $key)) {
