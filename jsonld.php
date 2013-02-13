@@ -2706,6 +2706,11 @@ class JsonLdProcessor {
       return (object)array('@id' => $this->_expandIri(
         $active_ctx, $value, array('base' => true)));
     }
+    // do @id expansion w/vocab
+    if($type === '@vocab') {
+      return (object)array('@id' => $this->_expandIri(
+        $active_ctx, $value, array('vocab' => true, 'base' => true)));
+    }
 
     // do not expand keyword values
     if(self::_isKeyword($expanded_property)) {
