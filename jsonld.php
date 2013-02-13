@@ -4310,7 +4310,8 @@ class JsonLdProcessor {
     $rval = $value;
 
     // value is a term
-    if($mapping && !$mapping->propertyGenerator) {
+    if(isset($relative_to['vocab']) && $relative_to['vocab'] &&
+      $mapping && !$mapping->propertyGenerator) {
       $is_absolute = true;
       $rval = $mapping->{'@id'};
     }
