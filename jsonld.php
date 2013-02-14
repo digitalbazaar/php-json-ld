@@ -3718,15 +3718,14 @@ class JsonLdProcessor {
       return (count($aliases) > 0) ? $aliases[0] : $iri;
     }
 
-    // use inverse context to pick a term
-    $inverse_ctx = $this->_getInverseContext($active_ctx);
+    // use inverse context to pick a term if iri is relative to vocab
+    if(isset($relative_to['vocab']) && $relative_to['vocab'] &&
+      property_exists($this->_getInverseContext($active_ctx), $iri)) {
+      $default_language = '@none';
+      if(property_exists($active_ctx, '@language')) {
+        $default_language = $active_ctx->{'@language'};
+      }
 
-    $default_language = '@none';
-    if(property_exists($active_ctx, '@language')) {
-      $default_language = $active_ctx->{'@language'};
-    }
-
-    if(property_exists($inverse_ctx, $iri)) {
       // prefer @index if available in value
       $containers = array();
       if(is_object($value) && property_exists($value, '@index')) {
@@ -3961,7 +3960,8 @@ class JsonLdProcessor {
     $expanded_property = $this->_expandIri($active_ctx, $active_property);
     $type = self::getContextValue($active_ctx, $active_property, '@type');
     $term = $this->_compactIri(
-      $active_ctx, $value->{'@id'}, null, array('base' => true));
+      $active_ctx, $value->{'@id'}, null,
+      array('vocab' => ($type === '@vocab'), 'base' => true));
 
     // compact to scalar
     if($type === '@id' || $type === '@vocab' ||
