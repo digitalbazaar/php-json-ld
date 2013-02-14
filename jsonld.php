@@ -4285,56 +4285,44 @@ class JsonLdProcessor {
       $this->_createTermDefinition($active_ctx, $local_ctx, $value, $defined);
     }
 
-    if(property_exists($active_ctx->mappings, $value)) {
-      $mapping = $active_ctx->mappings->{$value};
+    $rval = null;
 
-      // value is explicitly ignored with a null mapping
-      if($mapping === null) {
-        return null;
+    if(isset($relative_to['vocab']) && $relative_to['vocab']) {
+      if(property_exists($active_ctx->mappings, $value)) {
+        // term dependency cannot be a property generator
+        $mapping = $active_ctx->mappings->{$value};
+        if($local_ctx !== null && $mapping && $mapping->propertyGenerator) {
+          throw new JsonLdException(
+            'Invalid JSON-LD syntax; a term definition cannot have a property ' .
+            'generator as a dependency.',
+            'jsonld.SyntaxError',
+            array('context' => $local_ctx, 'value' => $value));
+        }
+
+        // value is explicitly ignored with a null mapping
+        if($mapping === null) {
+          return null;
+        }
+
+        // value is a term
+        if(!$mapping->propertyGenerator) {
+          $rval = $mapping->{'@id'};
+        }
       }
     }
-    else {
-      $mapping = null;
-    }
 
-    // term dependency cannot be a property generator
-    if($local_ctx !== null && $mapping && $mapping->propertyGenerator) {
-      throw new JsonLdException(
-        'Invalid JSON-LD syntax; a term definition cannot have a property ' .
-        'generator as a dependency.',
-        'jsonld.SyntaxError',
-        array('context' => $local_ctx, 'value' => $value));
-    }
-
-    $is_absolute = false;
-    $rval = $value;
-
-    // value is a term
-    if(isset($relative_to['vocab']) && $relative_to['vocab'] &&
-      $mapping && !$mapping->propertyGenerator) {
-      $is_absolute = true;
-      $rval = $mapping->{'@id'};
-    }
-
-    // keywords need no expanding (aliasing already handled by now)
-    if(self::_isKeyword($rval)) {
-      return $rval;
-    }
-
-    if(!$is_absolute) {
+    if($rval === null) {
       // split value into prefix:suffix
-      $colon = strpos($rval, ':');
+      $colon = strpos($value, ':');
       if($colon !== false) {
-        $is_absolute = true;
-        $prefix = substr($rval, 0, $colon);
-        $suffix = substr($rval, $colon + 1);
+        $prefix = substr($value, 0, $colon);
+        $suffix = substr($value, $colon + 1);
 
         // do not expand blank nodes (prefix of '_') or already-absolute
         // IRIs (suffix of '//')
         if($prefix !== '_' && strpos($suffix, '//') !== 0) {
           // prefix dependency not defined, define it
-          if($local_ctx !== null && property_exists($local_ctx, $prefix) &&
-            !self::_hasKeyValue($defined, $prefix, true)) {
+          if($local_ctx !== null && property_exists($local_ctx, $prefix)) {
             $this->_createTermDefinition(
               $active_ctx, $local_ctx, $prefix, $defined);
           }
@@ -4350,7 +4338,16 @@ class JsonLdProcessor {
       }
     }
 
-    if($is_absolute) {
+    if($rval === null) {
+      $rval = $value;
+    }
+
+    // keywords need no expanding (aliasing already handled by now)
+    if(self::_isKeyword($rval)) {
+      return $rval;
+    }
+
+    if(self::_isAbsoluteIri($rval)) {
       // rename blank node if requested
       if(!$local_ctx && strpos($rval, '_:') === 0 &&
         $active_ctx->namer !== null) {
