@@ -2702,7 +2702,8 @@ class JsonLdProcessor {
     $type = self::getContextValue($active_ctx, $active_property, '@type');
 
     // do @id expansion (automatic for @graph)
-    if($type === '@id' || $expanded_property === '@graph') {
+    if($type === '@id' || ($expanded_property === '@graph' &&
+      is_string($value))) {
       return (object)array('@id' => $this->_expandIri(
         $active_ctx, $value, array('base' => true)));
     }
@@ -3621,8 +3622,27 @@ class JsonLdProcessor {
     if($type_or_language_value === null) {
       $type_or_language_value = '@null';
     }
-    // options for the value of @type or @language
-    $options = array($type_or_language_value, '@none');
+
+    // options for the value of @type or @language,
+    // determine for @id based on whether or not value compacts to a term
+    if($type_or_language_value === '@id' && self::_isSubjectReference($value)) {
+      // try to compact value to a term
+      $term = $this->_compactIri(
+        $active_ctx, $value->{'@id'}, null,
+        array('vocab' => true, 'base' => true));
+      if(property_exists($active_ctx->mappings, $term)) {
+        // prefer @vocab
+        $options = array('@vocab', '@id', '@none');
+      }
+      else {
+        // prefer @id
+        $options = array('@id', '@vocab', '@none');
+      }
+    }
+    else {
+      $options = array($type_or_language_value, '@none');
+    }
+
     $term = null;
     $container_map = $active_ctx->inverse->{$iri};
     foreach($containers as $container) {
@@ -3944,7 +3964,8 @@ class JsonLdProcessor {
       $active_ctx, $value->{'@id'}, null, array('base' => true));
 
     // compact to scalar
-    if($type === '@id' || $expanded_property === '@graph') {
+    if($type === '@id' || $type === '@vocab' ||
+      $expanded_property === '@graph') {
       return $term;
     }
 
