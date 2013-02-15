@@ -62,6 +62,62 @@ function deep_compare($expect, $result) {
   return $expect === $result;
 }
 
+function expanded_compare($x, $y, $is_list=false) {
+  if($x === $y) {
+    return true;
+  }
+  if(gettype($x) !== gettype($y)) {
+    return false;
+  }
+  if(is_array($x)) {
+    if(!is_array($y) || count($x) !== count($y)) {
+      return false;
+    }
+    $rval = true;
+    if($is_list) {
+      // compare in order
+      for($i = 0; $rval && $i < count($x); ++$i) {
+        $rval = expanded_compare($x[$i], $y[$i], false);
+      }
+    }
+    else {
+      // compare in any order
+      $iso = array();
+      for($i = 0; $rval && $i < count($x); ++$i) {
+        $rval = false;
+        for($j = 0; !$rval && $j < count($y); ++$j) {
+          if(!isset($iso[$j])) {
+            if(expanded_compare($x[$i], $y[$j], false)) {
+              $iso[$j] = $i;
+              $rval = true;
+            }
+          }
+        }
+      }
+      $rval = $rval && (count($iso) === count($x));
+    }
+    return $rval;
+  }
+  if(is_object($x)) {
+    $x_keys = array_keys((array)$x);
+    $y_keys = array_keys((array)$y);
+    if(count($x_keys) !== count($y_keys)) {
+      return false;
+    }
+    foreach($x_keys as $key) {
+      if(!property_exists($y, $key)) {
+        return false;
+      }
+      if(!expanded_compare($x->{$key}, $y->{$key}, $key === '@list')) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  return false;
+}
+
 /**
  * Reads test JSON files.
  *
@@ -173,14 +229,35 @@ class TestRunner {
     echo $line;
   }
 
-  public function check($test, $expect, $result, $compare_json) {
+  public function check($test, $expect, $result, $type) {
     global $eol;
 
-    $json_equal = true;
-    if($compare_json) {
-      $json_equal = (json_encode($expect) === json_encode($result));
+    $compare_json = !in_array('jld:ToRDFTest', $type);
+    $relabel = in_array('jld:FlattenTest', $type);
+    $expanded = $relabel || in_array('jld:ExpandTest', $type);
+    if($relabel) {
+      $expect = jsonld_relabel_blank_nodes($expect);
+      $result = jsonld_relabel_blank_nodes($result);
     }
-    if($json_equal || deep_compare($expect, $result)) {
+
+    $pass = false;
+    if($compare_json) {
+      $pass = (json_encode($expect) === json_encode($result));
+    }
+    if(!$pass) {
+      $pass = deep_compare($expect, $result) ||
+        ($expanded && expanded_compare($expect, $result, $relabel));
+    }
+    if(!$pass && $relabel) {
+      echo "WARN tried normalization...";
+      $expect_normalized = jsonld_normalize(
+        $expect, array('format' => 'application/nquads'));
+      $result_normalized = jsonld_normalize(
+        $result, array('format' => 'application/nquads'));
+      $pass = ($expect_normalized === $result_normalized);
+    }
+
+    if($pass) {
       $this->passed += 1;
       echo "PASS$eol";
     }
@@ -261,7 +338,6 @@ class TestRunner {
       foreach($manifest->sequence as $test) {
         // read test input files
         $type = $test->{'@type'};
-        $compare_json = true;
         $options = array(
           'base' => 'http://json-ld.org/test-suite/tests/' . $test->input);
 
@@ -316,7 +392,6 @@ class TestRunner {
             $test->expect = read_test_nquads($test->expect, $filepath);
             $options['format'] = 'application/nquads';
             $result = jsonld_to_rdf($input, $options);
-            $compare_json = false;
           }
           else {
             echo "Skipping test \"{$test->name}\" of type: " .
@@ -325,7 +400,7 @@ class TestRunner {
           }
 
           // check results
-          $this->check($test, $test->expect, $result, $compare_json);
+          $this->check($test, $test->expect, $result, $type);
         }
         catch(JsonLdException $e) {
           echo $eol . $e;

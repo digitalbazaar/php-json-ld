@@ -162,6 +162,16 @@ function jsonld_to_rdf($input, $options=array()) {
   return $p->toRDF($input, $options);
 }
 
+/**
+ * Relabels all blank nodes in the given JSON-LD input.
+ *
+ * @param mixed input the JSON-LD input.
+ */
+function jsonld_relabel_blank_nodes($input) {
+  $p = new JsonLdProcessor();
+  return $p->_labelBlankNodes(new UniqueNamer('_:b'), $input);
+}
+
 /** JSON-LD shared in-memory cache. */
 global $jsonld_cache;
 $jsonld_cache = new stdClass();
@@ -1905,7 +1915,8 @@ class JsonLdProcessor {
 
         // add copy of value for each property from property generator
         if(is_array($expanded_property)) {
-          $this->_labelBlankNodes($active_ctx->namer, $expanded_value);
+          $expanded_value = $this->_labelBlankNodes(
+            $active_ctx->namer, $expanded_value);
           foreach($expanded_property as $iri) {
             self::addValue(
               $rval, $iri, self::copy($expanded_value),
@@ -2044,10 +2055,12 @@ class JsonLdProcessor {
 
     // add all non-default graphs to default graph
     $default_graph = $graphs->{'@default'};
-    foreach($graphs as $graph_name => $node_map) {
+    $graph_names = array_keys((array)$graphs);
+    foreach($graph_names as $graph_name) {
       if($graph_name === '@default') {
         continue;
       }
+      $node_map = $graphs->{$graph_name};
       if(!property_exists($default_graph, $graph_name)) {
         $default_graph->{$graph_name} = (object)array(
           '@id' => $graph_name, '@graph' => array());
@@ -2706,7 +2719,7 @@ class JsonLdProcessor {
    *
    * @return mixed the element.
    */
-  protected function _labelBlankNodes($namer, $element) {
+  public function _labelBlankNodes($namer, $element) {
     if(is_array($element)) {
       $length = count($element);
       for($i = 0; $i < $length; ++$i) {
@@ -3018,7 +3031,7 @@ class JsonLdProcessor {
           // add reference and recurse
           self::addValue(
             $subject, $property, (object)array('@id' => $id),
-            array('propertyIsArray' => true));
+            array('propertyIsArray' => true, 'allowDuplicate' => false));
           $this->_createNodeMap($o, $graphs, $graph, $namer, $id, null);
         }
         // handle $list
@@ -3028,13 +3041,15 @@ class JsonLdProcessor {
             $o->{'@list'}, $graphs, $graph, $namer, $name, $_list);
           $o = (object)array('@list' => (array)$_list);
           self::addValue(
-            $subject, $property, $o, array('propertyIsArray' => true));
+            $subject, $property, $o,
+            array('propertyIsArray' => true, 'allowDuplicate' => false));
         }
         // handle @value
         else {
           $this->_createNodeMap($o, $graphs, $graph, $namer, $name, null);
           self::addValue(
-            $subject, $property, $o, array('propertyIsArray' => true));
+            $subject, $property, $o,
+            array('propertyIsArray' => true, 'allowDuplicate' => false));
         }
       }
     }
