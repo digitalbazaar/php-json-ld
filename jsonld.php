@@ -276,6 +276,15 @@ function jsonld_parse_url($url) {
   if(!isset($rval['scheme'])) {
     $rval['scheme'] = '';
   }
+  if(isset($rval['user']) || isset($rval['pass'])) {
+    $rval['auth'] = '';
+    if(isset($rval['user'])) {
+      $rval['auth'] = $rval['user'];
+    }
+    if(isset($rval['pass'])) {
+      $rval['auth'] .= ":{$rval['pass']}";
+    }
+  }
   return $rval;
 }
 
@@ -373,13 +382,73 @@ function jsonld_prepend_base($base, $iri) {
   }
 
   $absolute_iri = "{$base['scheme']}://";
-  if(isset($base['user']) || isset($base['pass'])) {
-    $absolute_iri .= "{$base['user']}:{$base['pass']}@";
+  if(isset($base['auth'])) {
+    $absolute_iri .= "{$base['auth']}@";
   }
   $absolute_iri .= "$authority$path";
 
   return $absolute_iri;
 }
+
+/**
+ * Removes a base IRI from the given absolute IRI.
+ *
+ * @param mixed $base the base IRI.
+ * @param string $iri the absolute IRI.
+ *
+ * @return string the relative IRI if relative to base, otherwise the absolute
+ *           IRI.
+ */
+function jsonld_remove_base($base, $iri) {
+  if(is_string($base)) {
+    $base = jsonld_parse_url($base);
+  }
+
+  // establish base root
+  $root = "{$base['scheme']}://";
+  if(isset($base['auth'])) {
+    $root .= "{$base['auth']}@";
+  }
+  $authority = $base['host'];
+  if(isset($base['port'])) {
+    $authority .= ":{$base['port']}";
+  }
+  $root .= $authority;
+
+  // IRI not relative to base
+  if(strpos($iri, $root) !== 0) {
+    return $iri;
+  }
+
+  // remove path segments that match
+  $base_segments = explode('/', $base['path']);
+  $iri_segments = explode('/', substr($iri, strlen($root)));
+  while(count($base_segments) > 0 && count($iri_segments) > 0) {
+    if($base_segments[0] !== $iri_segments[0]) {
+      break;
+    }
+    array_shift($base_segments);
+    array_shift($iri_segments);
+  }
+
+  // use '../' for each non-matching base segment
+  $rval = '';
+  if(count($base_segments) > 0) {
+    // do not count the last segment if it isn't a path (doesn't end in '/')
+    if(substr($base['path'], -1) !== '/') {
+      array_pop($base_segments);
+    }
+    foreach($base_segments as $segment) {
+      $rval .= '../';
+    }
+  }
+
+  // prepend remaining segments
+  $rval .= implode('/', $iri_segments);
+
+  return $rval;
+}
+
 
 /**
  * A JSON-LD processor.
@@ -1476,8 +1545,8 @@ class JsonLdProcessor {
           // compact single @id
           if(is_string($expanded_value)) {
             $compacted_value = $this->_compactIri(
-              $active_ctx, $expanded_value, null, array(
-                'vocab' => ($expanded_property === '@type')));
+              $active_ctx, $expanded_value, null,
+              array('vocab' => ($expanded_property === '@type')));
           }
           // expanded value must be a @type array
           else {
@@ -3628,9 +3697,10 @@ class JsonLdProcessor {
     if($type_or_language_value === '@id' && self::_isSubjectReference($value)) {
       // try to compact value to a term
       $term = $this->_compactIri(
-        $active_ctx, $value->{'@id'}, null,
-        array('vocab' => true, 'base' => true));
-      if(property_exists($active_ctx->mappings, $term)) {
+        $active_ctx, $value->{'@id'}, null, array('vocab' => true));
+      if(property_exists($active_ctx->mappings, $term) &&
+        $active_ctx->mappings->{$term} &&
+        $active_ctx->mappings->{$term}->{'@id'} === $value->{'@id'}) {
         // prefer @vocab
         $options = array('@vocab', '@id', '@none');
       }
@@ -3698,7 +3768,6 @@ class JsonLdProcessor {
    * @param string $iri the IRI to compact.
    * @param mixed $value the value to check or null.
    * @param assoc $relative_to options for how to compact IRIs:
-   *          base: true to compact against the base IRI, false not to.
    *          vocab: true to split after @vocab, false not to.
    * @param mixed $parent the parent element for the value.
    *
@@ -3873,8 +3942,8 @@ class JsonLdProcessor {
       }
     }
 
-    // no compaction choices, return IRI as is
-    return $iri;
+    // compact IRI relative to base
+    return jsonld_remove_base($active_ctx->{'@base'}, $iri);
   }
 
   /**
@@ -3941,8 +4010,7 @@ class JsonLdProcessor {
       // compact @type IRI
       if(property_exists($value, '@type')) {
         $rval->{$this->_compactIri($active_ctx, '@type')} = $this->_compactIri(
-          $active_ctx, $value->{'@type'}, null,
-          array('base' => true, 'vocab' => true));
+          $active_ctx, $value->{'@type'}, null, array('vocab' => true));
       }
       // alias @language
       else if(property_exists($value, '@language')) {
@@ -3959,18 +4027,18 @@ class JsonLdProcessor {
     // value is a subject reference
     $expanded_property = $this->_expandIri($active_ctx, $active_property);
     $type = self::getContextValue($active_ctx, $active_property, '@type');
-    $term = $this->_compactIri(
+    $compacted = $this->_compactIri(
       $active_ctx, $value->{'@id'}, null,
-      array('vocab' => ($type === '@vocab'), 'base' => true));
+      array('vocab' => ($type === '@vocab')));
 
     // compact to scalar
     if($type === '@id' || $type === '@vocab' ||
       $expanded_property === '@graph') {
-      return $term;
+      return $compacted;
     }
 
     $rval = (object)array(
-      $this->_compactIri($active_ctx, '@id') => $term);
+      $this->_compactIri($active_ctx, '@id') => $compacted);
     return $rval;
   }
 
