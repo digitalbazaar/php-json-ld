@@ -46,7 +46,7 @@
  *          [strict] use strict mode (default: true).
  *          [optimize] true to optimize the compaction (default: false).
  *          [graph] true to always output a top-level graph (default: false).
- *          [resolver(url)] the URL resolver to use.
+ *          [urlClient(url)] the URL client to use.
  *
  * @return mixed the compacted JSON-LD output.
  */
@@ -61,7 +61,7 @@ function jsonld_compact($input, $ctx, $options=array()) {
  * @param mixed $input the JSON-LD object to expand.
  * @param assoc[$options] the options to use:
  *          [base] the base IRI to use.
- *          [resolver(url)] the URL resolver to use.
+ *          [urlClient(url)] the URL client to use.
  *
  * @return array the expanded JSON-LD output.
  */
@@ -78,7 +78,7 @@ function jsonld_expand($input, $options=array()) {
  *          null.
  * @param [options] the options to use:
  *          [base] the base IRI to use.
- *          [resolver(url, callback(err, jsonCtx))] the URL resolver to use.
+ *          [urlClient(url)] the URL client to use.
  *
  * @return mixed the flattened JSON-LD output.
  */
@@ -98,7 +98,7 @@ function jsonld_flatten($input, $ctx, $options=array()) {
  *          [explicit] default @explicit flag (default: false).
  *          [omitDefault] default @omitDefault flag (default: false).
  *          [optimize] optimize when compacting (default: false).
- *          [resolver(url)] the URL resolver to use.
+ *          [urlClient(url)] the URL client to use.
  *
  * @return stdClass the framed JSON-LD output.
  */
@@ -115,7 +115,7 @@ function jsonld_frame($input, $frame, $options=array()) {
  *          [base] the base IRI to use.
  *          [format] the format if output is a string:
  *            'application/nquads' for N-Quads (default).
- *          [resolver(url)] the URL resolver to use.
+ *          [urlClient(url)] the URL client to use.
  *
  * @return array the normalized output.
  */
@@ -153,7 +153,7 @@ function jsonld_from_rdf($input, $options=array()) {
  *          [base] the base IRI to use.
  *          [format] the format to use to output a string:
  *            'application/nquads' for N-Quads (default).
- *          [resolver(url)] the URL resolver to use.
+ *          [urlClient(url)] the URL client to use.
  *
  * @return array all RDF statements in the JSON-LD object.
  */
@@ -179,45 +179,45 @@ $jsonld_cache = new stdClass();
 /** The default active context cache. */
 $jsonld_cache->activeCtx = new ActiveContextCache();
 
-/** The default JSON-LD URL resolver. */
-global $jsonld_default_url_resolver;
-$jsonld_default_url_resolver = null;
+/** The default JSON-LD URL client. */
+global $jsonld_default_url_client;
+$jsonld_default_url_client = null;
 
 /**
- * Sets the default JSON-LD URL resolver.
+ * Sets the default JSON-LD URL client.
  *
- * @param callable resolver(url) the URL resolver to use.
+ * @param callable url_client(url) the URL client to use.
  */
-function jsonld_set_url_resolver($resolver) {
-  global $jsonld_default_url_resolver;
-  $jsonld_default_url_resolver = $resolver;
+function jsonld_set_url_client($url_client) {
+  global $jsonld_default_url_client;
+  $jsonld_default_url_client = $url_client;
 }
 
 /**
  * Retrieves JSON-LD at the given URL.
  *
- * @param string $url the URL to to resolve.
+ * @param string $url the URL to to retrieve.
  *
  * @return the JSON-LD.
  */
-function jsonld_resolve_url($url) {
-  global $jsonld_default_url_resolver;
-  if($jsonld_default_url_resolver !== null) {
-    return call_user_func($jsonld_default_url_resolver, $url);
+function jsonld_retrieve_url($url) {
+  global $jsonld_default_url_client;
+  if($jsonld_default_url_client !== null) {
+    return call_user_func($jsonld_default_url_client, $url);
   }
 
   // default JSON-LD GET implementation
-  return jsonld_default_resolve_url($url);
+  return jsonld_default_retrieve_url($url);
 }
 
 /**
  * The default implementation to retrieve JSON-LD at the given URL.
  *
- * @param string $url the URL to to resolve.
+ * @param string $url the URL to to retrieve.
  *
  * @return the JSON-LD.
  */
-function jsonld_default_resolve_url($url) {
+function jsonld_default_retrieve_url($url) {
   // default JSON-LD GET implementation
   $opts = array('http' =>
     array(
@@ -497,7 +497,7 @@ class JsonLdProcessor {
    *          [skipExpansion] true to assume the input is expanded and skip
    *            expansion, false not to, defaults to false.
    *          [activeCtx] true to also return the active context used.
-   *          [resolver(url)] the URL resolver to use.
+   *          [urlClient(url)] the URL client to use.
    *
    * @return mixed the compacted JSON-LD output.
    */
@@ -516,7 +516,8 @@ class JsonLdProcessor {
     isset($options['graph']) or $options['graph'] = false;
     isset($options['skipExpansion']) or $options['skipExpansion'] = false;
     isset($options['activeCtx']) or $options['activeCtx'] = false;
-    isset($options['resolver']) or $options['resolver'] = 'jsonld_resolve_url';
+    isset($options['urlClient']) or $options['urlClient'] =
+      'jsonld_retrieve_url';
 
     if($options['skipExpansion'] === true) {
       $expanded = $input;
@@ -627,7 +628,7 @@ class JsonLdProcessor {
    *            defaults to true.
    *          [keepFreeFloatingNodes] true to keep free-floating nodes,
    *            false not to, defaults to false.
-   *          [resolver(url)] the URL resolver to use.
+   *          [urlClient(url)] the URL client to use.
    *
    * @return array the expanded JSON-LD output.
    */
@@ -638,13 +639,14 @@ class JsonLdProcessor {
       true;
     isset($options['keepFreeFloatingNodes']) or
       $options['keepFreeFloatingNodes'] = false;
-    isset($options['resolver']) or $options['resolver'] = 'jsonld_resolve_url';
+    isset($options['urlClient']) or $options['urlClient'] =
+      'jsonld_retrieve_url';
 
-    // resolve all @context URLs in the input
+    // retrieve all @context URLs in the input
     $input = self::copy($input);
     try {
-      $this->_resolveContextUrls(
-        $input, new stdClass(), $options['resolver'], $options['base']);
+      $this->_retrieveContextUrls(
+        $input, new stdClass(), $options['urlClient'], $options['base']);
     }
     catch(Exception $e) {
       throw new JsonLdException(
@@ -675,14 +677,15 @@ class JsonLdProcessor {
    * @param ctx the context to use to compact the flattened output, or null.
    * @param assoc $options the options to use:
    *          [base] the base IRI to use.
-   *          [resolver(url)] the URL resolver to use.
+   *          [urlClient(url)] the URL client to use.
    *
    * @return array the flattened output.
    */
   public function flatten($input, $ctx, $options) {
     // set default options
     isset($options['base']) or $options['base'] = '';
-    isset($options['resolver']) or $options['resolver'] = 'jsonld_resolve_url';
+    isset($options['urlClient']) or $options['urlClient'] =
+      'jsonld_retrieve_url';
 
     try {
       // expand input
@@ -727,7 +730,7 @@ class JsonLdProcessor {
    *          [explicit] default @explicit flag (default: false).
    *          [omitDefault] default @omitDefault flag (default: false).
    *          [optimize] optimize when compacting (default: false).
-   *          [resolver(url)] the URL resolver to use.
+   *          [urlClient(url)] the URL client to use.
    *
    * @return stdClass the framed JSON-LD output.
    */
@@ -738,7 +741,8 @@ class JsonLdProcessor {
     isset($options['explicit']) or $options['explicit'] = false;
     isset($options['omitDefault']) or $options['omitDefault'] = false;
     isset($options['optimize']) or $options['optimize'] = false;
-    isset($options['resolver']) or $options['resolver'] = 'jsonld_resolve_url';
+    isset($options['urlClient']) or $options['urlClient'] =
+      'jsonld_retrieve_url';
 
     // preserve frame context
     $ctx = (property_exists($frame, '@context') ?
@@ -799,14 +803,15 @@ class JsonLdProcessor {
    * @param mixed $input the JSON-LD object to normalize.
    * @param assoc $options the options to use:
    *          [base] the base IRI to use.
-   *          [resolver(url)] the URL resolver to use.
+   *          [urlClient(url)] the URL client to use.
    *
    * @return array the JSON-LD normalized output.
    */
   public function normalize($input, $options) {
     // set default options
     isset($options['base']) or $options['base'] = '';
-    isset($options['resolver']) or $options['resolver'] = 'jsonld_resolve_url';
+    isset($options['urlClient']) or $options['urlClient'] =
+      'jsonld_retrieve_url';
 
     try {
       // expand input then do normalization
@@ -877,14 +882,15 @@ class JsonLdProcessor {
    *          [base] the base IRI to use.
    *          [format] the format to use to output a string:
    *            'application/nquads' for N-Quads (default).
-   *          [resolver(url)] the URL resolver to use.
+   *          [urlClient(url)] the URL client to use.
    *
    * @return array all RDF statements in the JSON-LD object.
    */
   public function toRDF($input, $options) {
     // set default options
     isset($options['base']) or $options['base'] = '';
-    isset($options['resolver']) or $options['resolver'] = 'jsonld_resolve_url';
+    isset($options['urlClient']) or $options['urlClient'] =
+      'jsonld_retrieve_url';
 
     try {
       // expand input
@@ -932,7 +938,7 @@ class JsonLdProcessor {
    * @param assoc $options the options to use:
    *          [renameBlankNodes] true to rename blank nodes, false not to,
    *            defaults to true.
-   *          [resolver(url)] the URL resolver to use.
+   *          [urlClient(url)] the URL client to use.
    *
    * @return stdClass the new active context.
    */
@@ -941,21 +947,22 @@ class JsonLdProcessor {
     isset($options['base']) or $options['base'] = '';
     isset($options['renameBlankNodes']) or $options['renameBlankNodes'] =
       true;
-    isset($options['resolver']) or $options['resolver'] = 'jsonld_resolve_url';
+    isset($options['urlClient']) or $options['urlClient'] =
+      'jsonld_retrieve_url';
 
     // return initial context early for null context
     if($local_ctx === null) {
       return $this->_getInitialContext($options);
     }
 
-    // resolve URLs in local_ctx
+    // retrieve URLs in local_ctx
     $ctx = self::copy($local_ctx);
     if(is_object($ctx) && !property_exists($ctx, '@context')) {
       $ctx = (object)array('@context' => $ctx);
     }
     try {
-      $this->_resolveContextUrls(
-        $ctx, new stdClass(), $options['resolver'], $options['base']);
+      $this->_retrieveContextUrls(
+        $ctx, new stdClass(), $options['urlClient'], $options['base']);
     }
     catch(Exception $e) {
       throw new JsonLdException(
@@ -1709,7 +1716,7 @@ class JsonLdProcessor {
 
   /**
    * Recursively expands an element using the given context. Any context in
-   * the element will be removed. All context URLs must have been resolved
+   * the element will be removed. All context URLs must have been retrieved
    * before calling this method.
    *
    * @param stdClass $active_ctx the active context to use.
@@ -2621,7 +2628,7 @@ class JsonLdProcessor {
         $ctx = $ctx->{'@context'};
       }
 
-      // context must be an object by now, all URLs resolved before this call
+      // context must be an object by now, all URLs retrieved before this call
       if(!is_object($ctx)) {
         throw new JsonLdException(
           'Invalid JSON-LD syntax; @context must be an object.',
@@ -4557,32 +4564,32 @@ class JsonLdProcessor {
   }
 
   /**
-   * Resolves external @context URLs using the given URL resolver. Each
+   * Retrieves external @context URLs using the given URL client. Each
    * instance of @context in the input that refers to a URL will be replaced
    * with the JSON @context found at that URL.
    *
    * @param mixed $input the JSON-LD input with possible contexts.
    * @param stdClass $cycles an object for tracking context cycles.
-   * @param callable $resolver(url) the URL resolver.
+   * @param callable $url_client(url) the URL client.
    * @param base $base the base URL to resolve relative URLs against.
    *
    * @return mixed the result.
    */
-  protected function _resolveContextUrls(
-    &$input, $cycles, $resolver, $base='') {
+  protected function _retrieveContextUrls(
+    &$input, $cycles, $url_client, $base='') {
     if(count(get_object_vars($cycles)) > self::MAX_CONTEXT_URLS) {
       throw new JsonLdException(
         'Maximum number of @context URLs exceeded.',
         'jsonld.ContextUrlError', array('max' => self::MAX_CONTEXT_URLS));
     }
 
-    // for tracking the URLs to resolve
+    // for tracking the URLs to retrieve
     $urls = new stdClass();
 
     // find all URLs in the given input
     $this->_findContextUrls($input, $urls, false, $base);
 
-    // queue all unresolved URLs
+    // queue all unretrieved URLs
     $queue = array();
     foreach($urls as $url => $ctx) {
       if($ctx === false) {
@@ -4590,7 +4597,7 @@ class JsonLdProcessor {
       }
     }
 
-    // resolve URLs in queue
+    // retrieve URLs in queue
     foreach($queue as $url) {
       // check for context URL cycle
       if(property_exists($cycles, $url)) {
@@ -4601,8 +4608,8 @@ class JsonLdProcessor {
       $_cycles = self::copy($cycles);
       $_cycles->{$url} = true;
 
-      // resolve URL
-      $ctx = $resolver($url);
+      // retrieve URL
+      $ctx = $url_client($url);
 
       // parse string context as JSON
       if(is_string($ctx)) {
@@ -4637,7 +4644,7 @@ class JsonLdProcessor {
       // ensure ctx is an object
       if(!is_object($ctx)) {
         throw new JsonLdException(
-          'URL does not resolve to a valid JSON-LD object.',
+          'Derefencing a URL did not result in a valid JSON-LD object.',
           'jsonld.InvalidUrl', array('url' => $url));
       }
 
@@ -4647,7 +4654,7 @@ class JsonLdProcessor {
       }
 
       // recurse
-      $this->_resolveContextUrls($ctx, $_cycles, $resolver, $url);
+      $this->_retrieveContextUrls($ctx, $_cycles, $url_client, $url);
       $urls->{$url} = $ctx->{'@context'};
     }
 
