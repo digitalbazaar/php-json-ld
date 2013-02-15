@@ -1346,7 +1346,7 @@ class JsonLdProcessor {
    * Converts an RDF statement to an N-Quad string (a single quad).
    *
    * @param stdClass $statement the RDF statement to convert.
-   * @param string $bnode the bnode the staetment is mapped to (optional, for
+   * @param string $bnode the bnode the statement is mapped to (optional, for
    *           use during normalization only).
    *
    * @return the N-Quad string.
@@ -1409,11 +1409,11 @@ class JsonLdProcessor {
       if($g->interfaceName === 'IRI') {
         $quad .= " <{$g->nominalValue}>";
       }
-      else if(bnode) {
-        $quad += ' _:g';
+      else if($bnode) {
+        $quad .= ' _:g';
       }
       else {
-        $quad += " {$g->nominalValue}";
+        $quad .= " {$g->nominalValue}";
       }
     }
 
@@ -2013,7 +2013,7 @@ class JsonLdProcessor {
         else {
           // drop subjects that generate no triples
           $has_triples = false;
-          $ignore = array('@graph', '@type', '@list');
+          $ignore = array('@graph', '@type');
           foreach($keys as $key) {
             if(!self::_isKeyword($key) || in_array($key, $ignore)) {
               $has_triples = true;
@@ -2132,9 +2132,10 @@ class JsonLdProcessor {
     $namer = new UniqueNamer('_:t');
     $this->_toRDF($input, $namer, null, null, null, $statements);
     foreach($statements as $statement) {
-      foreach(array('subject', 'object') as $node) {
-        $id = $statement->{$node}->nominalValue;
-        if($statement->{$node}->interfaceName === 'BlankNode') {
+      foreach(array('subject', 'object', 'name') as $node) {
+        if(property_exists($statement, $node) &&
+          $statement->{$node}->interfaceName === 'BlankNode') {
+          $id = $statement->{$node}->nominalValue;
           if(property_exists($bnodes, $id)) {
             $bnodes->{$id}->statements[] = $statement;
           }
@@ -2224,8 +2225,10 @@ class JsonLdProcessor {
 
     // update bnode names in each statement and serialize
     foreach($statements as $statement) {
-      foreach(array('subject', 'object') as $node) {
-        if($statement->{$node}->interfaceName === 'BlankNode') {
+      foreach(array('subject', 'object', 'name') as $node) {
+        if(property_exists($statement, $node) &&
+          $statement->{$node}->interfaceName === 'BlankNode' &&
+          strpos($statement->{$node}->nominalValue, '_:c14n') !== 0) {
           $statement->{$node}->nominalValue = $namer->getName(
             $statement->{$node}->nominalValue);
         }
