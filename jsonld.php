@@ -200,14 +200,14 @@ function jsonld_set_url_client($url_client) {
  *
  * @return the JSON-LD.
  */
-function jsonld_retrieve_url($url) {
+function jsonld_get_url($url) {
   global $jsonld_default_url_client;
   if($jsonld_default_url_client !== null) {
     return call_user_func($jsonld_default_url_client, $url);
   }
 
   // default JSON-LD GET implementation
-  return jsonld_default_retrieve_url($url);
+  return jsonld_default_get_url($url);
 }
 
 /**
@@ -217,7 +217,7 @@ function jsonld_retrieve_url($url) {
  *
  * @return the JSON-LD.
  */
-function jsonld_default_retrieve_url($url) {
+function jsonld_default_get_url($url) {
   // default JSON-LD GET implementation
   $opts = array('http' =>
     array(
@@ -516,8 +516,7 @@ class JsonLdProcessor {
     isset($options['graph']) or $options['graph'] = false;
     isset($options['skipExpansion']) or $options['skipExpansion'] = false;
     isset($options['activeCtx']) or $options['activeCtx'] = false;
-    isset($options['urlClient']) or $options['urlClient'] =
-      'jsonld_retrieve_url';
+    isset($options['urlClient']) or $options['urlClient'] = 'jsonld_get_url';
 
     if($options['skipExpansion'] === true) {
       $expanded = $input;
@@ -639,8 +638,7 @@ class JsonLdProcessor {
       true;
     isset($options['keepFreeFloatingNodes']) or
       $options['keepFreeFloatingNodes'] = false;
-    isset($options['urlClient']) or $options['urlClient'] =
-      'jsonld_retrieve_url';
+    isset($options['urlClient']) or $options['urlClient'] = 'jsonld_get_url';
 
     // retrieve all @context URLs in the input
     $input = self::copy($input);
@@ -684,8 +682,7 @@ class JsonLdProcessor {
   public function flatten($input, $ctx, $options) {
     // set default options
     isset($options['base']) or $options['base'] = '';
-    isset($options['urlClient']) or $options['urlClient'] =
-      'jsonld_retrieve_url';
+    isset($options['urlClient']) or $options['urlClient'] = 'jsonld_get_url';
 
     try {
       // expand input
@@ -741,8 +738,7 @@ class JsonLdProcessor {
     isset($options['explicit']) or $options['explicit'] = false;
     isset($options['omitDefault']) or $options['omitDefault'] = false;
     isset($options['optimize']) or $options['optimize'] = false;
-    isset($options['urlClient']) or $options['urlClient'] =
-      'jsonld_retrieve_url';
+    isset($options['urlClient']) or $options['urlClient'] = 'jsonld_get_url';
 
     // preserve frame context
     $ctx = (property_exists($frame, '@context') ?
@@ -810,8 +806,7 @@ class JsonLdProcessor {
   public function normalize($input, $options) {
     // set default options
     isset($options['base']) or $options['base'] = '';
-    isset($options['urlClient']) or $options['urlClient'] =
-      'jsonld_retrieve_url';
+    isset($options['urlClient']) or $options['urlClient'] = 'jsonld_get_url';
 
     try {
       // expand input then do normalization
@@ -889,8 +884,7 @@ class JsonLdProcessor {
   public function toRDF($input, $options) {
     // set default options
     isset($options['base']) or $options['base'] = '';
-    isset($options['urlClient']) or $options['urlClient'] =
-      'jsonld_retrieve_url';
+    isset($options['urlClient']) or $options['urlClient'] = 'jsonld_get_url';
 
     try {
       // expand input
@@ -947,8 +941,7 @@ class JsonLdProcessor {
     isset($options['base']) or $options['base'] = '';
     isset($options['renameBlankNodes']) or $options['renameBlankNodes'] =
       true;
-    isset($options['urlClient']) or $options['urlClient'] =
-      'jsonld_retrieve_url';
+    isset($options['urlClient']) or $options['urlClient'] = 'jsonld_get_url';
 
     // return initial context early for null context
     if($local_ctx === null) {
