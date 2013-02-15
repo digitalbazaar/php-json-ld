@@ -3944,21 +3944,26 @@ class JsonLdProcessor {
     }
 
     // no matching terms or curies, use @vocab if available
-    if(isset($relative_to['vocab']) && $relative_to['vocab'] &&
-      property_exists($active_ctx, '@vocab')) {
-      // determine if vocab is a prefix of the iri
-      $vocab = $active_ctx->{'@vocab'};
-      if(strpos($iri, $vocab) === 0 && $iri !== $vocab) {
-        // use suffix as relative iri if it is not a term in the active context
-        $suffix = substr($iri, strlen($vocab));
-        if(!property_exists($active_ctx->mappings, $suffix)) {
-          return $suffix;
+    if(isset($relative_to['vocab']) && $relative_to['vocab']) {
+      if(property_exists($active_ctx, '@vocab')) {
+        // determine if vocab is a prefix of the iri
+        $vocab = $active_ctx->{'@vocab'};
+        if(strpos($iri, $vocab) === 0 && $iri !== $vocab) {
+          // use suffix as relative iri if it is not a term in the active context
+          $suffix = substr($iri, strlen($vocab));
+          if(!property_exists($active_ctx->mappings, $suffix)) {
+            return $suffix;
+          }
         }
       }
     }
-
     // compact IRI relative to base
-    return jsonld_remove_base($active_ctx->{'@base'}, $iri);
+    else {
+      return jsonld_remove_base($active_ctx->{'@base'}, $iri);
+    }
+
+    // return IRI as is
+    return $iri;
   }
 
   /**
