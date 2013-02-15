@@ -1762,7 +1762,7 @@ class JsonLdProcessor {
 
       // expand the active property
       $expanded_active_property = $this->_expandIri(
-        $active_ctx, $active_property);
+        $active_ctx, $active_property, array('vocab' => true));
 
       $rval = new stdClass();
       $keys = array_keys((array)$element);
@@ -2032,7 +2032,8 @@ class JsonLdProcessor {
     // drop top-level scalars that are not in lists
     if(!$inside_list &&
       ($active_property === null ||
-      $this->_expandIri($active_ctx, $active_property) === '@graph')) {
+      $this->_expandIri($active_ctx, $active_property,
+        array('vocab' => true)) === '@graph')) {
       return null;
     }
 
@@ -4048,7 +4049,8 @@ class JsonLdProcessor {
     }
 
     // value is a subject reference
-    $expanded_property = $this->_expandIri($active_ctx, $active_property);
+    $expanded_property = $this->_expandIri(
+      $active_ctx, $active_property, array('vocab' => true));
     $type = self::getContextValue($active_ctx, $active_property, '@type');
     $compacted = $this->_compactIri(
       $active_ctx, $value->{'@id'}, null,
