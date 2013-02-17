@@ -897,7 +897,7 @@ class JsonLdProcessor {
     }
 
     // get RDF statements
-    $namer = new UniqueNamer('_:t');
+    $namer = new UniqueNamer('_:b');
     $statements = array();
     $this->_toRDF($expanded, $namer, null, null, null, $statements);
 
@@ -2050,7 +2050,7 @@ class JsonLdProcessor {
    */
   protected function _flatten($input) {
     // produce a map of all subjects and name each bnode
-    $namer = new UniqueNamer('_:t');
+    $namer = new UniqueNamer('_:b');
     $graphs = (object)array('@default' => new stdClass());
     $this->_createNodeMap($input, $graphs, '@default', $namer);
 
@@ -2106,7 +2106,7 @@ class JsonLdProcessor {
 
     // produce a map of all graphs and name each bnode
     // FIXME: currently uses subjects from @merged graph only
-    $namer = new UniqueNamer('_:t');
+    $namer = new UniqueNamer('_:b');
     $this->_createNodeMap($input, $state->graphs, '@merged', $namer);
     $state->subjects = $state->graphs->{'@merged'};
 
@@ -2130,7 +2130,7 @@ class JsonLdProcessor {
     // map bnodes to RDF statements
     $statements = array();
     $bnodes = new stdClass();
-    $namer = new UniqueNamer('_:t');
+    $namer = new UniqueNamer('_:b');
     $this->_toRDF($input, $namer, null, null, null, $statements);
     foreach($statements as $statement) {
       foreach(array('subject', 'object', 'name') as $node) {
@@ -2202,7 +2202,7 @@ class JsonLdProcessor {
         }
 
         // hash bnode paths
-        $path_namer = new UniqueNamer('_:t');
+        $path_namer = new UniqueNamer('_:b');
         $path_namer->getName($bnode);
         $results[] = $this->_hashPaths($bnode, $bnodes, $namer, $path_namer);
       }
@@ -4666,7 +4666,7 @@ class JsonLdProcessor {
   protected function _getInitialContext($options) {
     $namer = null;
     if(isset($options['renameBlankNodes']) && $options['renameBlankNodes']) {
-      $namer = new UniqueNamer('_:t');
+      $namer = new UniqueNamer('_:b');
     }
     return (object)array(
       '@base' => jsonld_parse_url($options['base']),
@@ -4838,7 +4838,7 @@ class JsonLdProcessor {
     $rval->keywords = $active_ctx->keywords;
     $rval->mappings = $active_ctx->mappings;
     if($active_ctx->namer !== null) {
-      $rval->namer = new UniqueNamer('_:t');
+      $rval->namer = new UniqueNamer('_:b');
     }
     $rval->inverse = $active_ctx->inverse;
     return $rval;
