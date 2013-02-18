@@ -4751,8 +4751,6 @@ class JsonLdProcessor {
           $container_map->{$container} = (object)array(
             '@language' => new stdClass(),
             '@type' => new stdClass());
-          $container_map->{$container}->{'@language'}->{$default_language} =
-            (object)array('term' => null, 'propertyGenerators' => array());
         }
         $entry = $container_map->{$container};
 
