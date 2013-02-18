@@ -3886,7 +3886,8 @@ class JsonLdProcessor {
       }
       else {
         if(self::_isValue($value)) {
-          if(property_exists($value, '@language')) {
+          if(property_exists($value, '@language') &&
+            !property_exists($value, '@index')) {
             $containers[] = '@language';
             $type_or_language_value = $value->{'@language'};
           }
