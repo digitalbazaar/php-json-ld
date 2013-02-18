@@ -219,16 +219,66 @@ function jsonld_get_url($url) {
  */
 function jsonld_default_get_url($url) {
   // default JSON-LD GET implementation
-  $opts = array('http' =>
-    array(
+  $opts = array(
+    'http' => array(
       'method' => "GET",
       'header' =>
-      "Accept: application/ld+json\r\n" .
-      "User-Agent: PaySwarm PHP Client/1.0\r\n"));
+        "Accept: application/ld+json\r\n" .
+        "User-Agent: PaySwarm PHP Client/1.0\r\n"),
+    'https' => array(
+      'verify_peer' => true,
+      'method' => "GET",
+      'header' =>
+        "Accept: application/ld+json\r\n" .
+        "User-Agent: PaySwarm PHP Client/1.0\r\n"));
   $stream = stream_context_create($opts);
   $result = @file_get_contents($url, false, $stream);
   if($result === false) {
     throw new Exception("Could not GET url: '$url'");
+  }
+  return $result;
+}
+
+/**
+ * The default implementation to retrieve JSON-LD at the given secure URL.
+ *
+ * @param string $url the secure URL to to retrieve.
+ *
+ * @return the JSON-LD.
+ */
+function jsonld_default_get_secure_url($url) {
+  if(strpos($url, 'https') !== 0) {
+    throw new Exception("Could not GET url: '$url'; 'https' is required.");
+  }
+
+  $redirects = array();
+
+  // default JSON-LD https GET implementation
+  $opts = array(
+    'https' => array(
+      'verify_peer' => true,
+      'method' => "GET",
+      'header' =>
+        "Accept: application/ld+json\r\n" .
+        "User-Agent: PaySwarm PHP Client/1.0\r\n"));
+  $stream = stream_context_create($opts);
+  stream_context_set_params($stream, array('notification' =>
+    function($notification_code, $severity, $message) use (&$redirects) {
+      switch($notification_code) {
+      case STREAM_NOTIFY_REDIRECTED:
+        $redirects[] = $message;
+        break;
+      };
+  }));
+  $result = @file_get_contents($url, false, $stream);
+  if($result === false) {
+    throw new Exception("Could not GET url: '$url'");
+  }
+  foreach($redirects as $redirect) {
+    if(strpos($redirect, 'https') !== 0) {
+      throw new Exception(
+        "Could not GET redirected url: '$redirect'; 'https' is required.");
+    }
   }
   return $result;
 }
