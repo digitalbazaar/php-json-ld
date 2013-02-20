@@ -8,6 +8,9 @@
  */
 require_once('jsonld.php');
 
+// send errors to stdout
+ini_set('display_errors', 'stdout');
+
 // determine EOL for output based on command line php or webpage php
 $isCli = defined('STDIN');
 $eol = $isCli ? "\n" : '<br/>';

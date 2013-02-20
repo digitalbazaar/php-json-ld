@@ -108,7 +108,8 @@ function jsonld_frame($input, $frame, $options=array()) {
 }
 
 /**
- * Performs RDF normalization on the given JSON-LD input.
+ * Performs RDF dataset normalization on the given JSON-LD input. The output
+ * is an RDF dataset unless the 'format' option is used.
  *
  * @param mixed $input the JSON-LD object to normalize.
  * @param assoc [$options] the options to use:
@@ -117,7 +118,7 @@ function jsonld_frame($input, $frame, $options=array()) {
  *            'application/nquads' for N-Quads (default).
  *          [loadContext(url)] the context loader.
  *
- * @return array the normalized output.
+ * @return mixed the normalized output.
  */
 function jsonld_normalize($input, $options=array()) {
   $p = new JsonLdProcessor();
@@ -125,11 +126,10 @@ function jsonld_normalize($input, $options=array()) {
 }
 
 /**
- * Converts RDF statements into JSON-LD.
+ * Converts an RDF dataset to JSON-LD.
  *
- * @param mixed $statements a serialized string of RDF statements in a format
- *          specified by the format option or an array of the RDF statements
- *          to convert.
+ * @param mixed $input a serialized string of RDF in a format specified
+ *          by the format option or an RDF dataset to convert.
  * @param assoc [$options] the options to use:
  *          [format] the format if input not an array:
  *            'application/nquads' for N-Quads (default).
@@ -146,7 +146,7 @@ function jsonld_from_rdf($input, $options=array()) {
 }
 
 /**
- * Outputs the RDF statements found in the given JSON-LD object.
+ * Outputs the RDF dataset found in the given JSON-LD object.
  *
  * @param mixed $input the JSON-LD object.
  * @param assoc [$options] the options to use:
@@ -155,7 +155,7 @@ function jsonld_from_rdf($input, $options=array()) {
  *            'application/nquads' for N-Quads (default).
  *          [loadContext(url)] the context loader.
  *
- * @return array all RDF statements in the JSON-LD object.
+ * @return mixed the resulting RDF dataset (or a serialization of it).
  */
 function jsonld_to_rdf($input, $options=array()) {
   $p = new JsonLdProcessor();
@@ -283,18 +283,18 @@ function jsonld_default_get_secure_url($url) {
   return $result;
 }
 
-/** Registered global RDF Statement parsers hashed by content-type. */
+/** Registered global RDF dataset parsers hashed by content-type. */
 global $jsonld_rdf_parsers;
 $jsonld_rdf_parsers = new stdClass();
 
 /**
- * Registers a global RDF Statement parser by content-type, for use with
+ * Registers a global RDF dataset parser by content-type, for use with
  * jsonld_from_rdf. Global parsers will be used by JsonLdProcessors that do
  * not register their own parsers.
  *
  * @param string $content_type the content-type for the parser.
  * @param callable $parser(input) the parser function (takes a string as
- *           a parameter and returns an array of RDF statements).
+ *           a parameter and returns an RDF dataset).
  */
 function jsonld_register_rdf_parser($content_type, $parser) {
   global $jsonld_rdf_parsers;
@@ -302,7 +302,7 @@ function jsonld_register_rdf_parser($content_type, $parser) {
 }
 
 /**
- * Unregisters a global RDF Statement parser by content-type.
+ * Unregisters a global RDF dataset parser by content-type.
  *
  * @param string $content_type the content-type for the parser.
  */
@@ -525,11 +525,13 @@ class JsonLdProcessor {
   const RDF_REST = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#rest';
   const RDF_NIL = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#nil';
   const RDF_TYPE = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type';
+  const RDF_LANGSTRING =
+    'http://www.w3.org/1999/02/22-rdf-syntax-ns#langString';
 
   /** Restraints */
   const MAX_CONTEXT_URLS = 10;
 
-  /** Processor-specific RDF Statement parsers. */
+  /** Processor-specific RDF dataset parsers. */
   protected $rdfParsers = null;
 
   /**
@@ -853,9 +855,11 @@ class JsonLdProcessor {
    * @param mixed $input the JSON-LD object to normalize.
    * @param assoc $options the options to use:
    *          [base] the base IRI to use.
+   *          [format] the format if output is a string:
+   *            'application/nquads' for N-Quads.
    *          [loadContext(url)] the context loader.
    *
-   * @return array the JSON-LD normalized output.
+   * @return mixed the normalized output.
    */
   public function normalize($input, $options) {
     // set default options
@@ -864,25 +868,28 @@ class JsonLdProcessor {
       'jsonld_get_url';
 
     try {
-      // expand input then do normalization
-      $expanded = $this->expand($input, $options);
+      // convert to RDF dataset then do normalization
+      $opts = self::copy($options);
+      if(isset($opts['format'])) {
+        unset($opts['format']);
+      }
+      $dataset = $this->toRDF($input, $opts);
     }
     catch(Exception $e) {
       throw new JsonLdException(
-        'Could not expand input before normalization.',
+        'Could not convert input to RDF dataset before normalization.',
         'jsonld.NormalizeError', null, $e);
     }
 
     // do normalization
-    return $this->_normalize($expanded, $options);
+    return $this->_normalize($dataset, $options);
   }
 
   /**
-   * Converts RDF statements into JSON-LD.
+   * Converts an RDF dataset to JSON-LD.
    *
-   * @param mixed $statements a serialized string of RDF statements in a format
-   *          specified by the format option or an array of the RDF statements
-   *          to convert.
+   * @param mixed $dataset a serialized string of RDF in a format specified
+   *          by the format option or an RDF dataset to convert.
    * @param assoc $options the options to use:
    *          [format] the format if input is a string:
    *            'application/nquads' for N-Quads (default).
@@ -893,15 +900,20 @@ class JsonLdProcessor {
    *
    * @return array the JSON-LD output.
    */
-  public function fromRDF($statements, $options) {
+  public function fromRDF($dataset, $options) {
     global $jsonld_rdf_parsers;
 
     // set default options
-    isset($options['format']) or $options['format'] = 'application/nquads';
     isset($options['useRdfType']) or $options['useRdfType'] = false;
     isset($options['useNativeTypes']) or $options['useNativeTypes'] = true;
 
-    if(!is_array($statements)) {
+    if(!isset($options['format']) && is_string($dataset)) {
+      // set default format to nquads
+      $options['format'] = 'application/nquads';
+    }
+
+    // handle special format
+    if(isset($options['format']) && $options['format']) {
       // supported formats (processor-specific and global)
       if(($this->rdfParsers !== null &&
         !property_exists($this->rdfParsers, $options['format'])) ||
@@ -917,15 +929,15 @@ class JsonLdProcessor {
       else {
         $callable = $jsonld_rdf_parsers->{$options['format']};
       }
-      $statements = call_user_func($callable, $statements);
+      $dataset = call_user_func($callable, $dataset);
     }
 
     // convert from RDF
-    return $this->_fromRDF($statements, $options);
+    return $this->_fromRDF($dataset, $options);
   }
 
   /**
-   * Outputs the RDF statements found in the given JSON-LD object.
+   * Outputs the RDF dataset found in the given JSON-LD object.
    *
    * @param mixed $input the JSON-LD object.
    * @param assoc $options the options to use:
@@ -934,7 +946,7 @@ class JsonLdProcessor {
    *            'application/nquads' for N-Quads (default).
    *          [loadContext(url)] the context loader.
    *
-   * @return array all RDF statements in the JSON-LD object.
+   * @return mixed the resulting RDF dataset (or a serialization of it).
    */
   public function toRDF($input, $options) {
     // set default options
@@ -952,21 +964,28 @@ class JsonLdProcessor {
         'jsonld.RdfError', $e);
     }
 
-    // get RDF statements
+    // create node map for default graph (and any named graphs)
     $namer = new UniqueNamer('_:b');
-    $statements = array();
-    $this->_toRDF($expanded, $namer, null, null, null, $statements);
+    $node_map = (object)array('@default' => new stdClass());
+    $this->_createNodeMap($expanded, $node_map, '@default', $namer);
+
+    // output RDF dataset
+    $namer = new UniqueNamer('_:b');
+    $dataset = new stdClass();
+    foreach($node_map as $graph_name => $graph) {
+      if(strpos($graph_name, '_:') === 0) {
+        $graph_name = $namer->getName($graph_name);
+      }
+      $dataset->{$graph_name} = $this->_graphToRDF($graph, $namer);
+    }
+
+    $rval = $dataset;
 
     // convert to output format
-    if(isset($options['format'])) {
+    if(isset($options['format']) && $options['format']) {
       // supported formats
       if($options['format'] === 'application/nquads') {
-        $nquads = array();
-        foreach($statements as $statement) {
-          $nquads[] = $this->toNQuad($statement);
-        }
-        sort($nquads);
-        $statements = implode($nquads);
+        $rval = self::toNQuads($dataset);
       }
       else {
         throw new JsonLdException(
@@ -975,8 +994,7 @@ class JsonLdProcessor {
       }
     }
 
-    // output RDF statements
-    return $statements;
+    return $rval;
   }
 
   /**
@@ -1289,11 +1307,11 @@ class JsonLdProcessor {
   }
 
   /**
-   * Parses statements in the form of N-Quads.
+   * Parses RDF in the form of N-Quads.
    *
    * @param string $input the N-Quads input to parse.
    *
-   * @return array the resulting RDF statements.
+   * @return stdClass an RDF dataset.
    */
   public static function parseNQuads($input) {
     // define partial regexes
@@ -1311,13 +1329,13 @@ class JsonLdProcessor {
     $subject = "(?:$iri|$bnode)$ws+";
     $property = "$iri$ws+";
     $object = "(?:$iri|$bnode|$literal)$ws*";
-    $graph = "(?:\\.|(?:(?:$iri|$bnode)$ws*\\.))";
+    $graph_name = "(?:\\.|(?:(?:$iri|$bnode)$ws*\\.))";
 
     // full quad regex
-    $quad = "/^$ws*$subject$property$object$graph$ws*$/";
+    $quad = "/^$ws*$subject$property$object$graph_name$ws*$/";
 
-    // build RDF statements
-    $statements = array();
+    // build RDF dataset
+    $dataset = new stdClass();
 
     // split N-Quad input into lines
     $lines = preg_split($eoln, $input);
@@ -1337,140 +1355,180 @@ class JsonLdProcessor {
           'jsonld.ParseError', array('line' => $line_number));
       }
 
-      // create RDF statement
-      $s = (object)array(
+      // create RDF triple
+      $triple = (object)array(
         'subject' => new stdClass(),
-        'property' => new stdClass(),
+        'predicate' => new stdClass(),
         'object' => new stdClass());
 
       // get subject
       if($match[1] !== '') {
-        $s->subject->nominalValue = $match[1];
-        $s->subject->interfaceName = 'IRI';
+        $triple->subject->type = 'IRI';
+        $triple->subject->value = $match[1];
       }
       else {
-        $s->subject->nominalValue = $match[2];
-        $s->subject->interfaceName = 'BlankNode';
+        $triple->subject->type = 'blank node';
+        $triple->subject->value = $match[2];
       }
 
-      // get property
-      $s->property->nominalValue = $match[3];
-      $s->property->interfaceName = 'IRI';
+      // get predicate
+      $triple->predicate->type = 'IRI';
+      $triple->predicate->value = $match[3];
 
       // get object
       if($match[4] !== '') {
-        $s->object->nominalValue = $match[4];
-        $s->object->interfaceName = 'IRI';
+        $triple->object->type = 'IRI';
+        $triple->object->value = $match[4];
       }
       else if($match[5] !== '') {
-        $s->object->nominalValue = $match[5];
-        $s->object->interfaceName = 'BlankNode';
+        $triple->object->type = 'blank node';
+        $triple->object->value = $match[5];
       }
       else {
+        $triple->object->type = 'literal';
         $unescaped = str_replace(
-           array('\"', '\t', '\n', '\r', '\\\\'),
-           array('"', "\t", "\n", "\r", '\\'),
-           $match[6]);
-        $s->object->nominalValue = $unescaped;
-        $s->object->interfaceName = 'LiteralNode';
+          array('\"', '\t', '\n', '\r', '\\\\'),
+          array('"', "\t", "\n", "\r", '\\'),
+          $match[6]);
         if(isset($match[7]) && $match[7] !== '') {
-          $s->object->datatype = (object)array(
-            'nominalValue' => $match[7], 'interfaceName' => 'IRI');
+          $triple->object->datatype = $match[7];
         }
         else if(isset($match[8]) && $match[8] !== '') {
-          $s->object->language = $match[8];
+          $triple->object->datatype = self::RDF_LANGSTRING;
+          $triple->object->language = $match[8];
         }
+        else {
+          $triple->object->datatype = self::XSD_STRING;
+        }
+        $triple->object->value = $unescaped;
       }
 
-      // get graph
+      // get graph name ('@default' is used for the default graph)
+      $name = '@default';
       if(isset($match[9]) && $match[9] !== '') {
-        $s->name = (object)array(
-          'nominalValue' => $match[9], 'interfaceName' => 'IRI');
+        $name = $match[9];
       }
       else if(isset($match[10]) && $match[10] !== '') {
-        $s->name = (object)array(
-          'nominalValue' => $match[10], 'interfaceName' => 'BlankNode');
+        $name = $match[10];
       }
 
-      // add statement
-      self::_appendUniqueRdfStatement($statements, $s);
+      // initialize graph in dataset
+      if(!property_exists($dataset, $name)) {
+        $dataset->{$name} = array($triple);
+      }
+      // add triple if unique to its graph
+      else {
+        $unique = true;
+        $triples = &$dataset->{$name};
+        foreach($triples as $t) {
+          if(self::_compareRDFTriples($t, $triple)) {
+            $unique = false;
+            break;
+          }
+        }
+        if($unique) {
+          $triples[] = $triple;
+        }
+      }
     }
 
-    return $statements;
+    return $dataset;
   }
 
   /**
-   * Converts an RDF statement to an N-Quad string (a single quad).
+   * Converts an RDF dataset to N-Quads.
    *
-   * @param stdClass $statement the RDF statement to convert.
-   * @param string $bnode the bnode the statement is mapped to (optional, for
-   *           use during normalization only).
+   * @param stdClass $dataset the RDF dataset to convert.
    *
-   * @return the N-Quad string.
+   * @return string the N-Quads string.
    */
-  public static function toNQuad($statement, $bnode=null) {
-    $s = $statement->subject;
-    $p = $statement->property;
-    $o = $statement->object;
-    $g = property_exists($statement, 'name') ? $statement->name : null;
+  public static function toNQuads($dataset) {
+    $quads = array();
+    foreach($dataset as $graph_name => $triples) {
+      foreach($triples as $triple) {
+        if($graph_name === '@default') {
+          $graph_name = null;
+        }
+        $quads[] = self::toNQuad($triple, $graph_name);
+      }
+    }
+    sort($quads);
+    return implode($quads);
+  }
+
+  /**
+   * Converts an RDF triple and graph name to an N-Quad string (a single quad).
+   *
+   * @param stdClass $triple the RDF triple to convert.
+   * @param mixed $graph_name the name of the graph containing the triple, null
+   *          for the default graph.
+   * @param string $bnode the bnode the quad is mapped to (optional, for
+   *          use during normalization only).
+   *
+   * @return string the N-Quad string.
+   */
+  public static function toNQuad($triple, $graph_name, $bnode=null) {
+    $s = $triple->subject;
+    $p = $triple->predicate;
+    $o = $triple->object;
+    $g = $graph_name;
 
     $quad = '';
 
     // subject is an IRI or bnode
-    if($s->interfaceName === 'IRI') {
-      $quad .= "<{$s->nominalValue}>";
+    if($s->type === 'IRI') {
+      $quad .= "<{$s->value}>";
     }
     // normalization mode
     else if($bnode !== null) {
-      $quad .= ($s->nominalValue === $bnode) ? '_:a' : '_:z';
+      $quad .= ($s->value === $bnode) ? '_:a' : '_:z';
     }
     // normal mode
     else {
-      $quad .= $s->nominalValue;
+      $quad .= $s->value;
     }
 
-    // property is always an IRI
-    $quad .= " <{$p->nominalValue}> ";
+    // predicate is always an IRI
+    $quad .= " <{$p->value}> ";
 
     // object is IRI, bnode, or literal
-    if($o->interfaceName === 'IRI') {
-      $quad .= "<{$o->nominalValue}>";
+    if($o->type === 'IRI') {
+      $quad .= "<{$o->value}>";
     }
-    else if($o->interfaceName === 'BlankNode') {
+    else if($o->type === 'blank node') {
       // normalization mode
       if($bnode !== null) {
-        $quad .= ($o->nominalValue === $bnode) ? '_:a' : '_:z';
+        $quad .= ($o->value === $bnode) ? '_:a' : '_:z';
       }
       // normal mode
       else {
-        $quad .= $o->nominalValue;
+        $quad .= $o->value;
       }
     }
     else {
       $escaped = str_replace(
-          array('\\', "\t", "\n", "\r", '"'),
-          array('\\\\', '\t', '\n', '\r', '\"'),
-          $o->nominalValue);
+        array('\\', "\t", "\n", "\r", '"'),
+        array('\\\\', '\t', '\n', '\r', '\"'),
+        $o->value);
       $quad .= '"' . $escaped . '"';
-      if(property_exists($o, 'datatype') &&
-        $o->datatype->nominalValue !== self::XSD_STRING) {
-        $quad .= "^^<{$o->datatype->nominalValue}>";
+      if($o->datatype === self::RDF_LANGSTRING) {
+        $quad .= "@{$o->language}";
       }
-      else if(property_exists($o, 'language')) {
-        $quad .= '@' . $o->language;
+      else if($o->datatype !== self::XSD_STRING) {
+        $quad .= "^^<{$o->datatype}>";
       }
     }
 
     // graph
     if($g !== null) {
-      if($g->interfaceName === 'IRI') {
-        $quad .= " <{$g->nominalValue}>";
+      if(strpos($g, '_:') !== 0) {
+        $quad .= " <$g>";
       }
       else if($bnode) {
         $quad .= ' _:g';
       }
       else {
-        $quad .= " {$g->nominalValue}";
+        $quad .= " $g";
       }
     }
 
@@ -1479,12 +1537,12 @@ class JsonLdProcessor {
   }
 
   /**
-   * Registers a processor-specific RDF Statement parser by content-type.
+   * Registers a processor-specific RDF dataset parser by content-type.
    * Global parsers will no longer be used by this processor.
    *
    * @param string $content_type the content-type for the parser.
    * @param callable $parser(input) the parser function (takes a string as
-   *           a parameter and returns an array of RDF statements).
+   *           a parameter and returns an RDF dataset).
    */
   public function registerRDFParser($content_type, $parser) {
     if($this->rdfParsers === null) {
@@ -1494,7 +1552,7 @@ class JsonLdProcessor {
   }
 
   /**
-   * Unregisters a process-specific RDF Statement parser by content-type. If
+   * Unregisters a process-specific RDF dataset parser by content-type. If
    * there are no remaining processor-specific parsers, then the global
    * parsers will be re-enabled.
    *
@@ -2176,38 +2234,54 @@ class JsonLdProcessor {
   }
 
   /**
-   * Performs JSON-LD normalization.
+   * Performs normalization on the given RDF dataset.
    *
-   * @param array $input the expanded JSON-LD object to normalize.
+   * @param stdClass $dataset the RDF dataset to normalize.
    * @param assoc $options the normalization options.
    *
    * @return mixed the normalized output.
    */
-  protected function _normalize($input, $options) {
-    // map bnodes to RDF statements
-    $statements = array();
+  protected function _normalize($dataset, $options) {
+    // create quads and map bnodes to their associated quads
+    $quads = array();
     $bnodes = new stdClass();
-    $namer = new UniqueNamer('_:b');
-    $this->_toRDF($input, $namer, null, null, null, $statements);
-    foreach($statements as $statement) {
-      foreach(array('subject', 'object', 'name') as $node) {
-        if(property_exists($statement, $node) &&
-          $statement->{$node}->interfaceName === 'BlankNode') {
-          $id = $statement->{$node}->nominalValue;
-          if(property_exists($bnodes, $id)) {
-            $bnodes->{$id}->statements[] = $statement;
+    foreach($dataset as $graph_name => $triples) {
+      if($graph_name === '@default') {
+        $graph_name = null;
+      }
+      foreach($triples as $triple) {
+        $quad = $triple;
+        if($graph_name !== null) {
+          if(strpos($graph_name, '_:') === 0) {
+            $quad->name = (object)array(
+              'type' => 'blank node', 'value' => $graph_name);
           }
           else {
-            $bnodes->{$id} = (object)array('statements' => array($statement));
+            $quad->name = (object)array(
+              'type' => 'IRI', 'value' => $graph_name);
+          }
+        }
+        $quads[] = $quad;
+
+        foreach(array('subject', 'object', 'name') as $attr) {
+          if(property_exists($quad, $attr) &&
+            $quad->{$attr}->type === 'blank node') {
+            $id = $quad->{$attr}->value;
+            if(property_exists($bnodes, $id)) {
+              $bnodes->{$id}->quads[] = $quad;
+            }
+            else {
+              $bnodes->{$id} = (object)array('quads' => array($quad));
+            }
           }
         }
       }
     }
 
-    // create canonical namer
+    // mapping complete, start canonical naming
     $namer = new UniqueNamer('_:c14n');
 
-    // continue to hash bnode statements while bnodes are assigned names
+    // continue to hash bnode quads while bnodes are assigned names
     $unnamed = null;
     $nextUnnamed = array_keys((array)$bnodes);
     $duplicates = null;
@@ -2217,8 +2291,8 @@ class JsonLdProcessor {
       $duplicates = new stdClass();
       $unique = new stdClass();
       foreach($unnamed as $bnode) {
-        // hash statements for each unnamed bnode
-        $hash = $this->_hashStatements($bnode, $bnodes, $namer);
+        // hash quads for each unnamed bnode
+        $hash = $this->_hashQuads($bnode, $bnodes, $namer);
 
         // store hash as unique or a duplicate
         if(property_exists($duplicates, $hash)) {
@@ -2281,92 +2355,73 @@ class JsonLdProcessor {
     // create normalized array
     $normalized = array();
 
-    // update bnode names in each statement and serialize
-    foreach($statements as $statement) {
-      foreach(array('subject', 'object', 'name') as $node) {
-        if(property_exists($statement, $node) &&
-          $statement->{$node}->interfaceName === 'BlankNode' &&
-          strpos($statement->{$node}->nominalValue, '_:c14n') !== 0) {
-          $statement->{$node}->nominalValue = $namer->getName(
-            $statement->{$node}->nominalValue);
+    /* Note: At this point all bnodes in the set of RDF quads have been
+     assigned canonical names, which have been stored in the 'namer' object.
+     Here each quad is updated by assigning each of its bnodes its new name
+     via the 'namer' object. */
+
+    // update bnode names in each quad and serialize
+    foreach($quads as $quad) {
+      foreach(array('subject', 'object', 'name') as $attr) {
+        if(property_exists($quad, $attr) &&
+          $quad->{$attr}->type === 'blank node' &&
+          strpos($quad->{$attr}->value, '_:c14n') !== 0) {
+          $quad->{$attr}->value = $namer->getName($quad->{$attr}->value);
         }
       }
-      $normalized[] = $this->toNQuad($statement);
+      $normalized[] = $this->toNQuad($quad, property_exists($quad, 'name') ?
+        $quad->name->value : null);
     }
 
     // sort normalized output
     sort($normalized);
 
     // handle output format
-    if(isset($options['format'])) {
+    if(isset($options['format']) && $options['format']) {
       if($options['format'] === 'application/nquads') {
         return implode($normalized);
       }
-      else {
-        throw new JsonLdException(
-          'Unknown output format.',
-          'jsonld.UnknownFormat', array('format' => $options['format']));
-      }
+      throw new JsonLdException(
+        'Unknown output format.',
+        'jsonld.UnknownFormat', array('format' => $options['format']));
     }
 
-    // return parsed RDF statements
+    // return RDF dataset
     return $this->parseNQuads(implode($normalized));
   }
 
   /**
-   * Converts RDF statements into JSON-LD.
+   * Converts an RDF dataset to JSON-LD.
    *
-   * @param array $statements the RDF statements.
+   * @param stdClass $dataset the RDF dataset.
    * @param assoc $options the RDF conversion options.
    *
    * @return array the JSON-LD output.
    */
-  protected function _fromRDF($statements, $options) {
+  protected function _fromRDF($dataset, $options) {
     // prepare graph map (maps graph name => subjects, lists)
     $default_graph = (object)array(
       'subjects' => new stdClass(), 'listMap' => new stdClass());
-    $graphs = new stdClass();
+    $graphs = (object)array('@default' => $default_graph);
 
-    foreach($statements as $statement) {
-      // get subject, property, object, and graph name (default to '')
-      $s = $statement->subject->nominalValue;
-      $p = $statement->property->nominalValue;
-      $o = $statement->object;
-      $name = (property_exists($statement, 'name') ?
-        $statement->name->nominalValue : '');
+    foreach($dataset as $graph_name => $triples) {
+      foreach($triples as $triple) {
+        // get subject, predicate, object
+        $s = $triple->subject->value;
+        $p = $triple->predicate->value;
+        $o = $triple->object;
 
-      // use default graph
-      if($name === '') {
-        $graph = $default_graph;
-      }
-      // create a named graph entry as needed
-      else if(!property_exists($graphs, $name)) {
-        $graph = $graphs->{$name} = (object)array(
-          'subjects' => new stdClass(), 'listMap' => new stdClass());
-      }
-      else {
-        $graph = $graphs->{$name};
-      }
-
-      // handle element in @list
-      if($p === self::RDF_FIRST) {
-        // create list entry as needed
-        $list_map = $graph->listMap;
-        if(!property_exists($list_map, $s)) {
-          $entry = $list_map->{$s} = new stdClass();
+        // create a named graph entry as needed
+        if(!property_exists($graphs, $graph_name)) {
+          $graph = $graphs->{$graph_name} = (object)array(
+            'subjects' => new stdClass(), 'listMap' => new stdClass());
         }
         else {
-          $entry = $list_map->{$s};
+          $graph = $graphs->{$graph_name};
         }
-        // set object value
-        $entry->first = $this->_rdfToObject($o, $options['useNativeTypes']);
-        continue;
-      }
 
-      // handle other element in @list
-      if($p === self::RDF_REST) {
-        // set next in list
-        if($o->interfaceName === 'BlankNode') {
+        // handle element in @list
+        if($p === self::RDF_FIRST) {
           // create list entry as needed
           $list_map = $graph->listMap;
           if(!property_exists($list_map, $s)) {
@@ -2375,48 +2430,68 @@ class JsonLdProcessor {
           else {
             $entry = $list_map->{$s};
           }
-          $entry->rest = $o->nominalValue;
+          // set object value
+          $entry->first = $this->_RDFToObject($o, $options['useNativeTypes']);
+          continue;
         }
-        continue;
-      }
 
-      // if graph is not the default graph
-      if($name !== '' && !property_exists($default_graph->subjects, $name)) {
-        $default_graph->subjects->{$name} = (object)array('@id' => $name);
-      }
-
-      // add subject to graph as needed
-      $subjects = $graph->subjects;
-      if(!property_exists($subjects, $s)) {
-        $value = $subjects->{$s} = (object)array('@id' => $s);
-      }
-      // use existing subject value
-      else {
-        $value = $subjects->{$s};
-      }
-
-      // convert to @type unless options indicate to treat rdf:type as property
-      if($p === self::RDF_TYPE && !$options['useRdfType']) {
-        // add value of object as @type
-        self::addValue(
-          $value, '@type', $o->nominalValue, array('propertyIsArray' => true));
-      }
-      else {
-        // add property to value as needed
-        $object = $this->_rdfToObject($o, $options['useNativeTypes']);
-        self::addValue($value, $p, $object, array('propertyIsArray' => true));
-
-        // a bnode might be the beginning of a list, so add it to the list map
-        if($o->interfaceName === 'BlankNode') {
-          $id = $object->{'@id'};
-          $list_map = $graph->listMap;
-          if(!property_exists($list_map, $id)) {
-            $entry = $list_map->{$id} = new stdClass();
+        // handle other element in @list
+        if($p === self::RDF_REST) {
+          // set next in list
+          if($o->type === 'blank node') {
+            // create list entry as needed
+            $list_map = $graph->listMap;
+            if(!property_exists($list_map, $s)) {
+              $entry = $list_map->{$s} = new stdClass();
+            }
+            else {
+              $entry = $list_map->{$s};
+            }
+            $entry->rest = $o->value;
           }
-          else {
-            $entry = $list_map->{$id};
+          continue;
+        }
+
+        // add graph subject to the default graph as needed
+        if($graph_name !== '@default' &&
+          !property_exists($default_graph->subjects, $graph_name)) {
+          $default_graph->subjects->{$graph_name} = (object)array(
+            '@id' => $graph_name);
+        }
+
+        // add subject to graph as needed
+        $subjects = $graph->subjects;
+        if(!property_exists($subjects, $s)) {
+          $value = $subjects->{$s} = (object)array('@id' => $s);
+        }
+        // use existing subject value
+        else {
+          $value = $subjects->{$s};
+        }
+
+        // convert to @type unless options indicate to treat rdf:type as property
+        if($p === self::RDF_TYPE && !$options['useRdfType']) {
+          // add value of object as @type
+          self::addValue(
+            $value, '@type', $o->value, array('propertyIsArray' => true));
+        }
+        else {
+          // add property to value as needed
+          $object = $this->_RDFToObject($o, $options['useNativeTypes']);
+          self::addValue($value, $p, $object, array('propertyIsArray' => true));
+
+          // a bnode might be the beginning of a list, so add it to the list map
+          if($o->type === 'blank node') {
+            $id = $object->{'@id'};
+            $list_map = $graph->listMap;
+            if(!property_exists($list_map, $id)) {
+              $entry = $list_map->{$id} = new stdClass();
+            }
+            else {
+              $entry = $list_map->{$id};
+            }
+            $entry->head = $object;
           }
-          $entry->head = $object;
         }
       }
     }
@@ -2463,172 +2538,16 @@ class JsonLdProcessor {
       // output named graph in subject @id order
       if(property_exists($graphs, $id)) {
         $graph = array();
-        $_subjects = $graphs->{$id}->subjects;
-        $_ids = array_keys((array)$_subjects);
-        sort($_ids);
-        foreach($_ids as $_i => $_id) {
-          $graph[] = $_subjects->{$_id};
+        $subjects_ = $graphs->{$id}->subjects;
+        $ids_ = array_keys((array)$subjects_);
+        sort($ids_);
+        foreach($ids_ as $i_ => $id_) {
+          $graph[] = $subjects_->{$id_};
         }
         $subject->{'@graph'} = $graph;
       }
     }
     return $output;
-  }
-
-  /**
-   * Outputs the RDF statements found in the given JSON-LD element.
-   *
-   * @param mixed element the JSON-LD element.
-   * @param UniqueNamer namer the UniqueNamer for assigning bnode names.
-   * @param mixed subject the active subject.
-   * @param mixed property the active property.
-   * @param mixed graph the graph name.
-   * @param &array statements the array to add statements to.
-   */
-  protected function _toRDF(
-    $element, $namer, $subject, $property, $graph, &$statements) {
-    // recurse into arrays
-    if(is_array($element)) {
-      // recurse into arrays
-      foreach($element as $e) {
-        $this->_toRDF($e, $namer, $subject, $property, $graph, $statements);
-      }
-      return;
-    }
-
-    // element must be an rdf:type IRI (@values covered above)
-    if(is_string($element)) {
-      // emit IRI
-      $statement = (object)array(
-          'subject' => self::copy($subject),
-          'property' => self::copy($property),
-          'object' => (object)array(
-              'nominalValue' => $element,
-              'interfaceName' => 'IRI'));
-      if($graph !== null) {
-        $statement->name = $graph;
-      }
-      self::_appendUniqueRdfStatement($statements, $statement);
-      return;
-    }
-
-    // convert @list
-    if(self::_isList($element)) {
-      $list = $this->_makeLinkedList($element);
-      $this->_toRDF($list, $namer, $subject, $property, $graph, $statements);
-      return;
-    }
-
-    // convert @value to object
-    if(self::_isValue($element)) {
-      $value = $element->{'@value'};
-      $datatype = (property_exists($element, '@type') ?
-          $element->{'@type'} : null);
-      if(is_bool($value) || is_double($value) || is_integer($value)) {
-        // convert to XSD datatypes as appropriate
-        if(is_bool($value)) {
-          $value = ($value ? 'true' : 'false');
-          $datatype or $datatype = self::XSD_BOOLEAN;
-        }
-        else if(is_double($value)) {
-          // canonical double representation
-          $value = preg_replace('/(\d)0*E\+?/', '$1E',
-              sprintf('%1.15E', $value));
-          $datatype or $datatype = self::XSD_DOUBLE;
-        }
-        else {
-          $value = strval($value);
-          $datatype or $datatype = self::XSD_INTEGER;
-        }
-      }
-
-      // default to xsd:string datatype
-      $datatype or $datatype = self::XSD_STRING;
-
-      $object = (object)array(
-        'nominalValue' => $value,
-        'interfaceName' => 'LiteralNode',
-        'datatype' => (object)array(
-          'nominalValue' => $datatype,
-          'interfaceName' => 'IRI'));
-      if(property_exists($element, '@language') &&
-        $datatype === self::XSD_STRING) {
-        $object->language = $element->{'@language'};
-      }
-
-      // emit literal
-      $statement = (object)array(
-        'subject' => self::copy($subject),
-        'property' => self::copy($property),
-        'object' => $object);
-      if($graph !== null) {
-        $statement->name = $graph;
-      }
-      self::_appendUniqueRdfStatement($statements, $statement);
-      return;
-    }
-
-    // Note: element must be a subject
-
-    // get subject @id (generate one if it is a bnode)
-    $id = property_exists($element, '@id') ? $element->{'@id'} : null;
-    $is_bnode = self::_isBlankNode($element);
-    if($is_bnode) {
-      $id = $namer->getName($id);
-    }
-
-    // create object
-    $object = (object)array(
-      'nominalValue' => $id,
-      'interfaceName' => $is_bnode ? 'BlankNode' : 'IRI');
-
-    // emit statement if subject isn't null
-    if($subject !== null) {
-      $statement = (object)array(
-        'subject' => self::copy($subject),
-        'property' => self::copy($property),
-        'object' => self::copy($object));
-      if($graph !== null) {
-        $statement->name = $graph;
-      }
-      self::_appendUniqueRdfStatement($statements, $statement);
-    }
-
-    // set new active subject to object
-    $subject = $object;
-
-    // recurse over subject properties in order
-    $props = array_keys((array)$element);
-    sort($props);
-    foreach($props as $prop) {
-      $p = $prop;
-
-      // convert @type to rdf:type
-      if($prop === '@type') {
-        $p = self::RDF_TYPE;
-      }
-
-      // recurse into @graph
-      if($prop === '@graph') {
-        $this->_toRDF(
-          $element->{$prop}, $namer, null, null, $subject, $statements);
-        continue;
-      }
-
-      // skip keywords
-      if(self::_isKeyword($p)) {
-        continue;
-      }
-
-      // create new active property
-      $property = (object)array(
-        'nominalValue' => $p,
-        'interfaceName' => 'IRI');
-
-      // recurse into value
-      $this->_toRDF(
-        $element->{$prop}, $namer, $subject, $property, $graph, $statements);
-    }
   }
 
   /**
@@ -2885,30 +2804,186 @@ class JsonLdProcessor {
   }
 
   /**
-   * Converts an RDF statement object to a JSON-LD object.
+   * Creates an array of RDF triples for the given graph.
    *
-   * @param stdClass $o the RDF statement object to convert.
+   * @param stdClass $graph the graph to create RDF triples for.
+   * @param UniqueNamer $namer for assigning bnode names.
+   *
+   * @return array the array of RDF triples for the given graph.
+   */
+  protected function _graphToRDF($graph, $namer) {
+    $rval = array();
+
+    foreach($graph as $id => $node) {
+      foreach($node as $property => $items) {
+        if($property === '@type') {
+          $property = self::RDF_TYPE;
+        }
+        else if(self::_isKeyword($property)) {
+          continue;
+        }
+
+        foreach($items as $item) {
+          // RDF subject
+          $subject = new stdClass();
+          if(strpos($id, '_:') === 0) {
+            $subject->type = 'blank node';
+            $subject->value = $namer->getName($id);
+          }
+          else {
+            $subject->type = 'IRI';
+            $subject->value = $id;
+          }
+
+          // RDF predicate
+          $predicate = new stdClass();
+          $predicate->type = 'IRI';
+          $predicate->value = $property;
+
+          // convert @list to triples
+          if(self::_isList($item)) {
+            $this->_listToRDF(
+              $item->{'@list'}, $namer, $subject, $predicate, $rval);
+          }
+          // convert value or node object to triple
+          else {
+            $object = $this->_objectToRDF($item, $namer);
+            $rval[] = (object)array(
+              'subject' => $subject,
+              'predicate' => $predicate,
+              'object' => $object);
+          }
+        }
+      }
+    }
+
+    return $rval;
+  }
+
+  /**
+   * Converts a @list value into linked list of blank node RDF triples
+   * (an RDF collection).
+   *
+   * @param array $list the @list value.
+   * @param UniqueNamer $namer for assigning blank node names.
+   * @param stdClass $subject the subject for the head of the list.
+   * @param stdClass $predicate the predicate for the head of the list.
+   * @param &array $triples the array of triples to append to.
+   */
+  protected function _listToRDF(
+    $list, $namer, $subject, $predicate, &$triples) {
+    $first = (object)array('type' => 'IRI', 'value' => self::RDF_FIRST);
+    $rest = (object)array('type' => 'IRI', 'value' => self::RDF_REST);
+    $nil = (object)array('type' => 'IRI', 'value' => self::RDF_NIL);
+
+    foreach($list as $item) {
+      $blank_node = (object)array(
+        'type' => 'blank node', 'value' => $namer->getName());
+      $triples[] = (object)array(
+        'subject' => $subject,
+        'predicate' => $predicate,
+        'object' => $blank_node);
+
+      $subject = $blank_node;
+      $predicate = $first;
+      $object = $this->_objectToRDF($item, $namer);
+      $triples[] = (object)array(
+        'subject' => $subject, 'predicate' => $predicate, 'object' => $object);
+
+      $predicate = $rest;
+    }
+
+    $triples[] = (object)array(
+      'subject' => $subject, 'predicate' => $predicate, 'object' => $nil);
+  }
+
+  /**
+   * Converts a JSON-LD value object to an RDF literal or a JSON-LD string or
+   * node object to an RDF resource.
+   *
+   * @param mixed $item the JSON-LD value or node object.
+   * @param UniqueNamer $namer for assign blank node names.
+   *
+   * @return stdClass the RDF literal or RDF resource.
+   */
+  protected function _objectToRDF($item, $namer) {
+    $object = new stdClass();
+
+    if(self::_isValue($item)) {
+      $object->type = 'literal';
+      $value = $item->{'@value'};
+      $datatype = property_exists($item, '@type') ? $item->{'@type'} : null;
+
+      // convert to XSD datatypes as appropriate
+      if(is_bool($value)) {
+        $object->value = ($value ? 'true' : 'false');
+        $object->datatype = $datatype ? $datatype : self::XSD_BOOLEAN;
+      }
+      else if(is_double($value)) {
+        // canonical double representation
+        $object->value = preg_replace(
+          '/(\d)0*E\+?/', '$1E', sprintf('%1.15E', $value));
+        $object->datatype = $datatype ? $datatype : self::XSD_DOUBLE;
+      }
+      else if(is_integer($value)) {
+        $object->value = strval($value);
+        $object->datatype = $datatype ? $datatype : self::XSD_INTEGER;
+      }
+      else if(property_exists($item, '@language')) {
+        $object->value = $value;
+        $object->datatype = $datatype ? $datatype : self::RDF_LANGSTRING;
+        $object->language = $item->{'@language'};
+      }
+      else {
+        $object->value = $value;
+        $object->datatype = $datatype ? $datatype : self::XSD_STRING;
+      }
+    }
+    // convert string/node object to RDF
+    else {
+      $id = is_object($item) ? $item->{'@id'} : $item;
+      if(strpos($id, '_:') === 0) {
+        $object->type = 'blank node';
+        $object->value = $namer->getName($id);
+      }
+      else {
+        $object->type = 'IRI';
+        $object->value = $id;
+      }
+    }
+
+    return $object;
+  }
+
+  /**
+   * Converts an RDF triple object to a JSON-LD object.
+   *
+   * @param stdClass $o the RDF triple object to convert.
    * @param bool $use_native_types true to output native types, false not to.
    *
    * @return stdClass the JSON-LD object.
    */
-  protected function _rdfToObject($o, $use_native_types) {
+  protected function _RDFToObject($o, $use_native_types) {
     // convert empty list
-    if($o->interfaceName === 'IRI' && $o->nominalValue === self::RDF_NIL) {
+    if($o->type === 'IRI' && $o->value === self::RDF_NIL) {
       return (object)array('@list' => array());
     }
 
-    // convert IRI/BlankNode object to JSON-LD
-    if($o->interfaceName === 'IRI' || $o->interfaceName === 'BlankNode') {
-      return (object)array('@id' => $o->nominalValue);
+    // convert IRI/blank node object to JSON-LD
+    if($o->type === 'IRI' || $o->type === 'blank node') {
+      return (object)array('@id' => $o->value);
     }
 
     // convert literal object to JSON-LD
-    $rval = (object)array('@value' => $o->nominalValue);
+    $rval = (object)array('@value' => $o->value);
 
+    // add language
+    if(property_exists($o, 'language')) {
+      $rval->{'@language'} = $o->language;
+    }
     // add datatype
-    if(property_exists($o, 'datatype')) {
-      $type = $o->datatype->nominalValue;
+    else {
+      $type = $o->datatype;
       // use native types for certain xsd types
       if($use_native_types) {
         if($type === self::XSD_BOOLEAN) {
@@ -2941,34 +3016,8 @@ class JsonLdProcessor {
         $rval->{'@type'} = $type;
       }
     }
-    // add language
-    if(property_exists($o, 'language')) {
-      $rval->{'@language'} = $o->language;
-    }
 
     return $rval;
-  }
-
-  /**
-   * Converts a @list value into an embedded linked list of blank nodes in
-   * expanded form. The resulting array can be used as an RDF-replacement for
-   * a property that used a @list.
-   *
-   * @param array $value the @list value.
-   *
-   * @return stdClass the head of the linked list of blank nodes.
-   */
-  protected function _makeLinkedList($value) {
-    // convert @list array into embedded blank node linked list in reverse
-    $list = $value->{'@list'};
-    $len = count($list);
-    $tail = (object)array('@id' => self::RDF_NIL);
-    for($i = $len - 1; $i >= 0; --$i) {
-      $tail = (object)array(
-        self::RDF_FIRST => array($list[$i]),
-        self::RDF_REST => array($tail));
-    }
-    return $tail;
   }
 
   /**
@@ -2977,7 +3026,7 @@ class JsonLdProcessor {
    *
    * @param mixed $input the JSON-LD expanded input.
    * @param stdClass $graphs a map of graph name to subject map.
-   * @[ara, string $graph the name of the current graph.
+   * @param string $graph the name of the current graph.
    * @param UniqueNamer $namer the blank node namer.
    * @param mixed $name the name assigned to the current input if it is a bnode.
    * @param mixed $list the list to append to, null for none.
@@ -3540,25 +3589,55 @@ class JsonLdProcessor {
   }
 
   /**
-   * Hashes all of the statements about a blank node.
+   * Compares two RDF triples for equality.
    *
-   * @param string $id the ID of the bnode to hash statements for.
-   * @param stdClass $bnodes the mapping of bnodes to statements.
+   * @param stdClass $t1 the first triple.
+   * @param stdClass $t2 the second triple.
+   *
+   * @return true if the triples are the same, false if not.
+   */
+  protected static function _compareRDFTriples($t1, $t2) {
+    foreach(array('subject', 'predicate', 'object') as $attr) {
+      if($t1->{$attr}->type !== $t2->{$attr}->type ||
+        $t1->{$attr}->value !== $t2->{$attr}->value) {
+        return false;
+      }
+    }
+    if(property_exists($t1->object, 'language') !==
+      property_exists($t1->object, 'language')) {
+      return false;
+    }
+    if(property_exists($t1->object, 'language') &&
+      $t1->object->language !== $t2->object->language) {
+      return false;
+    }
+    if($t1->object->datatype !== $t2->object->datatype) {
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * Hashes all of the quads about a blank node.
+   *
+   * @param string $id the ID of the bnode to hash quads for.
+   * @param stdClass $bnodes the mapping of bnodes to quads.
    * @param UniqueNamer $namer the canonical bnode namer.
    *
    * @return string the new hash.
    */
-  protected function _hashStatements($id, $bnodes, $namer) {
+  protected function _hashQuads($id, $bnodes, $namer) {
     // return cached hash
     if(property_exists($bnodes->{$id}, 'hash')) {
       return $bnodes->{$id}->hash;
     }
 
-    // serialize all of bnode's statements
-    $statements = $bnodes->{$id}->statements;
+    // serialize all of bnode's quads
+    $quads = $bnodes->{$id}->quads;
     $nquads = array();
-    foreach($statements as $statement) {
-      $nquads[] = $this->toNQuad($statement, $id);
+    foreach($quads as $quad) {
+      $nquads[] = $this->toNQuad($quad, property_exists($quad, 'name') ?
+        $quad->name->value : null, $id);
     }
 
     // sort serialized quads
@@ -3576,7 +3655,7 @@ class JsonLdProcessor {
    * lexicographically-least 'path' serializations.
    *
    * @param string $id the ID of the bnode to hash paths for.
-   * @param stdClass $bnodes the map of bnode statements.
+   * @param stdClass $bnodes the map of bnode quads.
    * @param UniqueNamer $namer the canonical bnode namer.
    * @param UniqueNamer $path_namer the namer used to assign names to adjacent
    *          bnodes.
@@ -3589,16 +3668,18 @@ class JsonLdProcessor {
 
     // group adjacent bnodes by hash, keep properties and references separate
     $groups = new stdClass();
-    $statements = $bnodes->{$id}->statements;
-    foreach($statements as $statement) {
+    $quads = $bnodes->{$id}->quads;
+    foreach($quads as $quad) {
       // get adjacent bnode
-      $bnode = $this->_getAdjacentBlankNodeName($statement->subject, $id);
+      $bnode = $this->_getAdjacentBlankNodeName($quad->subject, $id);
       if($bnode !== null) {
+        // normal property
         $direction = 'p';
       }
       else {
-        $bnode = $this->_getAdjacentBlankNodeName($statement->object, $id);
+        $bnode = $this->_getAdjacentBlankNodeName($quad->object, $id);
         if($bnode !== null) {
+          // reverse property
           $direction = 'r';
         }
       }
@@ -3611,13 +3692,13 @@ class JsonLdProcessor {
           $name = $path_namer->getName($bnode);
         }
         else {
-          $name = $this->_hashStatements($bnode, $bnodes, $namer);
+          $name = $this->_hashQuads($bnode, $bnodes, $namer);
         }
 
         // hash direction, property, and bnode name/hash
         $group_md = hash_init('sha1');
         hash_update($group_md, $direction);
-        hash_update($group_md, $statement->property->nominalValue);
+        hash_update($group_md, $quad->predicate->value);
         hash_update($group_md, $name);
         $group_hash = hash_final($group_md);
 
@@ -3706,19 +3787,18 @@ class JsonLdProcessor {
   }
 
   /**
-   * A helper function that gets the blank node name from an RDF statement
+   * A helper function that gets the blank node name from an RDF quad
    * node (subject or object). If the node is not a blank node or its
-   * nominal value does not match the given blank node ID, it will be
-   * returned.
+   * value does not match the given blank node ID, it will be returned.
    *
-   * @param stdClass $node the RDF statement node.
+   * @param stdClass $node the RDF quad node.
    * @param string $id the ID of the blank node to look next to.
    *
    * @return mixed the adjacent blank node name or null if none was found.
    */
   protected function _getAdjacentBlankNodeName($node, $id) {
-    if($node->interfaceName === 'BlankNode' && $node->nominalValue !== $id) {
-      return $node->nominalValue;
+    if($node->type === 'blank node' && $node->value !== $id) {
+      return $node->value;
     }
     return null;
   }
@@ -4898,74 +4978,6 @@ class JsonLdProcessor {
     }
     $rval->inverse = $active_ctx->inverse;
     return $rval;
-  }
-
-  /**
-   * Compares two RDF statements for equality.
-   *
-   * @param stdClass $s1 the first statement.
-   * @param stdClass $s2 the second statement.
-   *
-   * @return true if the statements are the same, false if not.
-   */
-  protected static function _compareRdfStatements($s1, $s2) {
-    if(is_string($s1) || is_string($s2)) {
-      return $s1 === $s2;
-    }
-
-    $attrs = array('subject', 'property', 'object');
-    foreach($attrs as $attr) {
-      if($s1->{$attr}->interfaceName !== $s2->{$attr}->interfaceName ||
-      $s1->{$attr}->nominalValue !== $s2->{$attr}->nominalValue) {
-        return false;
-      }
-    }
-    if(property_exists($s1->object, 'language') !==
-        property_exists($s1->object, 'language')) {
-      return false;
-    }
-    if(property_exists($s1->object, 'language')) {
-      if($s1->object->language !== $s2->object->language) {
-        return false;
-      }
-    }
-    if(property_exists($s1->object, 'datatype') !==
-        property_exists($s1->object, 'datatype')) {
-      return false;
-    }
-    if(property_exists($s1->object, 'datatype')) {
-      if($s1->object->datatype->interfaceName !==
-          $s2->object->datatype->interfaceName ||
-          $s1->object->datatype->nominalValue !==
-          $s2->object->datatype->nominalValue) {
-        return false;
-      }
-    }
-    if(property_exists($s1, 'name') !== property_exists($s1, 'name')) {
-      return false;
-    }
-    if(property_exists($s1, 'name')) {
-      if($s1->name !== $s2->name) {
-        return false;
-      }
-    }
-    return true;
-  }
-
-  /**
-   * Appends an RDF statement to the given array of statements if it is unique.
-   *
-   * @param array $statements the array to add to.
-   * @param stdClass $statement the statement to add.
-   */
-  protected static function _appendUniqueRdfStatement(
-    &$statements, $statement) {
-    foreach($statements as $s) {
-      if(self::_compareRdfStatements($s, $statement)) {
-        return;
-      }
-    }
-    $statements[] = $statement;
   }
 
   /**
