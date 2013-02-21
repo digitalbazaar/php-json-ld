@@ -4956,6 +4956,12 @@ class JsonLdProcessor {
     $child->mappings = self::copy($active_ctx->mappings);
     $child->namer = $active_ctx->namer;
     $child->inverse = null;
+    if(property_exists($active_ctx, '@language')) {
+      $child->{'@language'} = $active_ctx->{'@language'};
+    }
+    if(property_exists($active_ctx, '@vocab')) {
+      $child->{'@vocab'} = $active_ctx->{'@vocab'};
+    }
     return $child;
   }
 
@@ -4977,6 +4983,12 @@ class JsonLdProcessor {
       $rval->namer = new UniqueNamer('_:b');
     }
     $rval->inverse = $active_ctx->inverse;
+    if(property_exists($active_ctx, '@language')) {
+      $rval->{'@language'} = $active_ctx->{'@language'};
+    }
+    if(property_exists($active_ctx, '@vocab')) {
+      $rval->{'@vocab'} = $active_ctx->{'@vocab'};
+    }
     return $rval;
   }
 
