@@ -1,7 +1,7 @@
 <?php
 /**
  * PHP implementation of the JSON-LD API.
- * Version: 0.0.5
+ * Version: 0.0.6
  *
  * @author Dave Longley
  *
@@ -44,7 +44,6 @@
  * @param assoc [$options] options to use:
  *          [base] the base IRI to use.
  *          [strict] use strict mode (default: true).
- *          [optimize] true to optimize the compaction (default: false).
  *          [graph] true to always output a top-level graph (default: false).
  *          [loadContext(url)] the context loader.
  *
@@ -97,7 +96,6 @@ function jsonld_flatten($input, $ctx, $options=array()) {
  *          [embed] default @embed flag (default: true).
  *          [explicit] default @explicit flag (default: false).
  *          [omitDefault] default @omitDefault flag (default: false).
- *          [optimize] optimize when compacting (default: false).
  *          [loadContext(url)] the context loader.
  *
  * @return stdClass the framed JSON-LD output.
@@ -546,6 +544,10 @@ class JsonLdProcessor {
    * @param mixed $ctx the context to compact with.
    * @param assoc $options the compaction options.
    *          [base] the base IRI to use.
+   *          [strict] use strict mode (default: true).
+   *          [compactArrays] true to compact arrays to single values when
+   *            appropriate, false not to (default: true).
+   *          [graph] true to always output a top-level graph (default: false).
    *          [skipExpansion] true to assume the input is expanded and skip
    *            expansion, false not to, defaults to false.
    *          [activeCtx] true to also return the active context used.
@@ -561,10 +563,10 @@ class JsonLdProcessor {
 
     // set default options
     isset($options['base']) or $options['base'] = '';
+    isset($options['strict']) or $options['strict'] = true;
     isset($options['renameBlankNodes']) or $options['renameBlankNodes'] =
       true;
-    isset($options['strict']) or $options['strict'] = true;
-    isset($options['optimize']) or $options['optimize'] = false;
+    isset($options['compactArrays']) or $options['compactArrays'] = true;
     isset($options['graph']) or $options['graph'] = false;
     isset($options['skipExpansion']) or $options['skipExpansion'] = false;
     isset($options['activeCtx']) or $options['activeCtx'] = false;
@@ -600,7 +602,8 @@ class JsonLdProcessor {
     // do compaction
     $compacted = $this->_compact($active_ctx, null, $expanded, $options);
 
-    if(!$options['graph'] && is_array($compacted)) {
+    if($options['compactArrays'] &&
+      !$options['graph'] && is_array($compacted)) {
       // simplify to a single item
       if(count($compacted) === 1) {
         $compacted = $compacted[0];
@@ -781,7 +784,6 @@ class JsonLdProcessor {
    *          [embed] default @embed flag (default: true).
    *          [explicit] default @explicit flag (default: false).
    *          [omitDefault] default @omitDefault flag (default: false).
-   *          [optimize] optimize when compacting (default: false).
    *          [loadContext(url)] the context loader.
    *
    * @return stdClass the framed JSON-LD output.
@@ -789,10 +791,10 @@ class JsonLdProcessor {
   public function frame($input, $frame, $options) {
     // set default options
     isset($options['base']) or $options['base'] = '';
+    isset($options['compactArrays']) or $options['compactArrays'] = true;
     isset($options['embed']) or $options['embed'] = true;
     isset($options['explicit']) or $options['explicit'] = false;
     isset($options['omitDefault']) or $options['omitDefault'] = false;
-    isset($options['optimize']) or $options['optimize'] = false;
     isset($options['loadContext']) or $options['loadContext'] =
       'jsonld_get_url';
 
@@ -845,7 +847,7 @@ class JsonLdProcessor {
     $graph = $this->_compactIri($active_ctx, '@graph');
     // remove @preserve from results
     $compacted->{$graph} = $this->_removePreserve(
-      $active_ctx, $compacted->{$graph});
+      $active_ctx, $compacted->{$graph}, $options);
     return $compacted;
   }
 
@@ -1622,7 +1624,7 @@ class JsonLdProcessor {
           $rval[] = $compacted;
         }
       }
-      if(count($rval) === 1) {
+      if($options['compactArrays'] && count($rval) === 1) {
         // use single element if no container is specified
         $container = self::getContextValue(
           $active_ctx, $active_property, '@container');
@@ -1800,9 +1802,11 @@ class JsonLdProcessor {
               $map_object, $expanded_item->{$container}, $compacted_item);
           }
           else {
-            // use an array if: @container is @set or @list , value is an empty
+            // use an array if: compactArrays flag is false,
+            // @container is @set or @list , value is an empty
             // array, or key is @graph
-            $is_array = ($container === '@set' || $container === '@list' ||
+            $is_array = (!$options['compactArrays'] ||
+              $container === '@set' || $container === '@list' ||
               (is_array($compacted_item) && count($compacted_item) === 0) ||
               $expanded_property === '@list' ||
               $expanded_property === '@graph');
@@ -3538,15 +3542,16 @@ class JsonLdProcessor {
    *
    * @param stdClass $ctx the active context used to compact the input.
    * @param mixed $input the framed, compacted output.
+   * @param assoc $options the compaction options used.
    *
    * @return mixed the resulting output.
    */
-  protected function _removePreserve($ctx, $input) {
+  protected function _removePreserve($ctx, $input, $options) {
     // recurse through arrays
     if(is_array($input)) {
       $output = array();
       foreach($input as $e) {
-        $result = $this->_removePreserve($ctx, $e);
+        $result = $this->_removePreserve($ctx, $e, $options);
         // drop nulls from arrays
         if($result !== null) {
           $output[] = $result;
@@ -3570,15 +3575,17 @@ class JsonLdProcessor {
 
       // recurse through @lists
       if(self::_isList($input)) {
-        $input->{'@list'} = $this->_removePreserve($ctx, $input->{'@list'});
+        $input->{'@list'} = $this->_removePreserve(
+          $ctx, $input->{'@list'}, $options);
         return $input;
       }
 
       // recurse through properties
       foreach($input as $prop => $v) {
-        $result = $this->_removePreserve($ctx, $v);
+        $result = $this->_removePreserve($ctx, $v, $options);
         $container = self::getContextValue($ctx, $prop, '@container');
-        if(is_array($result) && count($result) === 1 &&
+        if($options['compactArrays'] &&
+          is_array($result) && count($result) === 1 &&
           $container !== '@set' && $container !== '@list') {
           $result = $result[0];
         }
