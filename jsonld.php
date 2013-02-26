@@ -4533,9 +4533,9 @@ class JsonLdProcessor {
    */
   function _expandIri(
     $active_ctx, $value, $relative_to=array(), $local_ctx=null, $defined=null) {
-    // nothing to expand
-    if($value === null) {
-      return null;
+    // already expanded
+    if($value === null || self::_isKeyword($value)) {
+      return $value;
     }
 
     // define term dependency if not defined
