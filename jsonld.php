@@ -1,7 +1,7 @@
 <?php
 /**
  * PHP implementation of the JSON-LD API.
- * Version: 0.0.9
+ * Version: 0.0.10
  *
  * @author Dave Longley
  *
@@ -429,7 +429,7 @@ function jsonld_prepend_base($base, $iri) {
     }
   }
 
-  $path = '/' . implode('/', $segments);
+  $path = implode('/', $segments);
 
   // add query and hash
   if(isset($rel['query'])) {
@@ -439,11 +439,20 @@ function jsonld_prepend_base($base, $iri) {
     $path .= "#{$rel['fragment']}";
   }
 
-  $absolute_iri = "{$base['scheme']}://";
-  if(isset($base['auth'])) {
-    $absolute_iri .= "{$base['auth']}@";
+  $absolute_iri = '';
+  if($base['scheme'] === '') {
+    if(strpos($iri, '//') === 0) {
+      $absolute_iri .= '//';
+    }
+    $absolute_iri .= $path;
   }
-  $absolute_iri .= "$authority$path";
+  else {
+    $absolute_iri .= "{$base['scheme']}://";
+    if(isset($base['auth'])) {
+      $absolute_iri .= "{$base['auth']}@";
+    }
+    $absolute_iri .= "$authority/$path";
+  }
 
   return $absolute_iri;
 }
@@ -462,16 +471,23 @@ function jsonld_remove_base($base, $iri) {
     $base = jsonld_parse_url($base);
   }
 
+  // base is empty
+  if($base['scheme'] === '') {
+    return $iri;
+  }
+
   // establish base root
-  $root = "{$base['scheme']}://";
-  if(isset($base['auth'])) {
-    $root .= "{$base['auth']}@";
+  $root = '';
+  if($base['scheme'] !== '') {
+    $root = "{$base['scheme']}://";
+    if(isset($base['auth'])) {
+      $root .= "{$base['auth']}@";
+    }
+    $root .= $base['host'];
+    if(isset($base['port'])) {
+      $root .= ":{$base['port']}";
+    }
   }
-  $authority = $base['host'];
-  if(isset($base['port'])) {
-    $authority .= ":{$base['port']}";
-  }
-  $root .= $authority;
 
   // IRI not relative to base
   if(strpos($iri, $root) !== 0) {
