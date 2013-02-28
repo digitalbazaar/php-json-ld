@@ -403,29 +403,32 @@ function jsonld_prepend_base($base, $iri) {
   };
   $segments = array_values(array_filter($segments, $filter));
 
-  // remove as many '..' as possible
-  for($i = 0; $i < count($segments);) {
-    $segment = $segments[$i];
-    if($segment === '..') {
-      // too many reverse dots
-      if($i === 0) {
-        $last = $segments[count($segments) - 1];
-        if($last !== '..') {
-          $segments = array($last);
+  // do not remove '..' for empty base
+  if($base['scheme'] !== '') {
+    // remove as many '..' as possible
+    for($i = 0; $i < count($segments);) {
+      $segment = $segments[$i];
+      if($segment === '..') {
+        // too many reverse dots
+        if($i === 0) {
+          $last = $segments[count($segments) - 1];
+          if($last !== '..') {
+            $segments = array($last);
+          }
+          else {
+            $segments = array();
+          }
+          break;
         }
-        else {
-          $segments = array();
-        }
-        break;
-      }
 
-      // remove '..' and previous segment
-      array_splice($segments, $i - 1, 2);
-      $segments = array_values($segments);
-      $i -= 1;
-    }
-    else {
-      $i += 1;
+        // remove '..' and previous segment
+        array_splice($segments, $i - 1, 2);
+        $segments = array_values($segments);
+        $i -= 1;
+      }
+      else {
+        $i += 1;
+      }
     }
   }
 
