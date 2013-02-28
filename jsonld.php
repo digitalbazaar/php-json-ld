@@ -1,7 +1,7 @@
 <?php
 /**
  * PHP implementation of the JSON-LD API.
- * Version: 0.0.11
+ * Version: 0.0.12
  *
  * @author Dave Longley
  *
@@ -360,14 +360,22 @@ function jsonld_prepend_base($base, $iri) {
     return $iri;
   }
 
+  // parse base if it is a string
   if(is_string($base)) {
     $base = jsonld_parse_url($base);
   }
+
+  // if base is empty, do not change iri
+  if($base['scheme'] === '') {
+    return $iri;
+  }
+
   $authority = $base['host'];
   if(isset($base['port'])) {
     $authority .= ":{$base['port']}";
   }
   $rel = jsonld_parse_url($iri);
+
 
   // per RFC3986 normalize slashes and dots in path
 
@@ -403,32 +411,29 @@ function jsonld_prepend_base($base, $iri) {
   };
   $segments = array_values(array_filter($segments, $filter));
 
-  // do not remove '..' for empty base
-  if($base['scheme'] !== '') {
-    // remove as many '..' as possible
-    for($i = 0; $i < count($segments);) {
-      $segment = $segments[$i];
-      if($segment === '..') {
-        // too many reverse dots
-        if($i === 0) {
-          $last = $segments[count($segments) - 1];
-          if($last !== '..') {
-            $segments = array($last);
-          }
-          else {
-            $segments = array();
-          }
-          break;
+  // remove as many '..' as possible
+  for($i = 0; $i < count($segments);) {
+    $segment = $segments[$i];
+    if($segment === '..') {
+      // too many reverse dots
+      if($i === 0) {
+        $last = $segments[count($segments) - 1];
+        if($last !== '..') {
+          $segments = array($last);
         }
+        else {
+          $segments = array();
+        }
+        break;
+      }
 
-        // remove '..' and previous segment
-        array_splice($segments, $i - 1, 2);
-        $segments = array_values($segments);
-        $i -= 1;
-      }
-      else {
-        $i += 1;
-      }
+      // remove '..' and previous segment
+      array_splice($segments, $i - 1, 2);
+      $segments = array_values($segments);
+      $i -= 1;
+    }
+    else {
+      $i += 1;
     }
   }
 
@@ -442,20 +447,11 @@ function jsonld_prepend_base($base, $iri) {
     $path .= "#{$rel['fragment']}";
   }
 
-  $absolute_iri = '';
-  if($base['scheme'] === '') {
-    if(strpos($iri, '//') === 0) {
-      $absolute_iri .= '//';
-    }
-    $absolute_iri .= $path;
+  $absolute_iri = "{$base['scheme']}://";
+  if(isset($base['auth'])) {
+    $absolute_iri .= "{$base['auth']}@";
   }
-  else {
-    $absolute_iri .= "{$base['scheme']}://";
-    if(isset($base['auth'])) {
-      $absolute_iri .= "{$base['auth']}@";
-    }
-    $absolute_iri .= "$authority/$path";
-  }
+  $absolute_iri .= "$authority/$path";
 
   return $absolute_iri;
 }
