@@ -1,7 +1,7 @@
 <?php
 /**
  * PHP implementation of the JSON-LD API.
- * Version: 0.0.7
+ * Version: 0.0.8
  *
  * @author Dave Longley
  *
@@ -2625,6 +2625,30 @@ class JsonLdProcessor {
 
       // define context mappings for keys in local context
       $defined = new stdClass();
+
+      // handle @base
+      if(property_exists($ctx, '@base')) {
+        $base = $ctx->{'@base'};
+        if($base === null) {
+          $rval->{'@base'} = jsonld_parse_url($options['base']);
+        }
+        else if(!is_string($base)) {
+          throw new JsonLdException(
+            'Invalid JSON-LD syntax; the value of "@base" in a ' .
+            '@context must be a string or null.',
+            'jsonld.SyntaxError', array('context' => $ctx));
+        }
+        else if(!self::_isAbsoluteIri($base)) {
+          throw new JsonLdException(
+            'Invalid JSON-LD syntax; the value of "@base" in a ' .
+            '@context must be an absolute IRI.',
+            'jsonld.SyntaxError', array('context' => $ctx));
+        }
+        else {
+          $rval->{'@base'} = $base;
+        }
+        $defined->{'@base'} = true;
+      }
 
       // handle @vocab
       if(property_exists($ctx, '@vocab')) {
