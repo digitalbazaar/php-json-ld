@@ -478,9 +478,12 @@ function jsonld_remove_base($base, $iri) {
     return $iri;
   }
 
+  // remove root from IRI
+  $rel = jsonld_parse_url(substr($iri, strlen($root)));
+
   // remove path segments that match
   $base_segments = explode('/', $base['path']);
-  $iri_segments = explode('/', substr($iri, strlen($root)));
+  $iri_segments = explode('/', $rel['path']);
   while(count($base_segments) > 0 && count($iri_segments) > 0) {
     if($base_segments[0] !== $iri_segments[0]) {
       break;
@@ -503,6 +506,18 @@ function jsonld_remove_base($base, $iri) {
 
   // prepend remaining segments
   $rval .= implode('/', $iri_segments);
+
+  // add query and hash
+  if(isset($rel['query'])) {
+    $rval .= "?{$rel['query']}";
+  }
+  if(isset($rel['fragment'])) {
+    $rval .= "#{$rel['fragment']}";
+  }
+
+  if($rval === '') {
+    $rval = './';
+  }
 
   return $rval;
 }
