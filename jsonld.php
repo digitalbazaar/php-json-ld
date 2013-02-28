@@ -1,7 +1,7 @@
 <?php
 /**
  * PHP implementation of the JSON-LD API.
- * Version: 0.0.8
+ * Version: 0.0.9
  *
  * @author Dave Longley
  *
@@ -2638,10 +2638,10 @@ class JsonLdProcessor {
             '@context must be a string or null.',
             'jsonld.SyntaxError', array('context' => $ctx));
         }
-        else if(!self::_isAbsoluteIri($base)) {
+        else if($base !== '' && !self::_isAbsoluteIri($base)) {
           throw new JsonLdException(
             'Invalid JSON-LD syntax; the value of "@base" in a ' .
-            '@context must be an absolute IRI.',
+            '@context must be an absolute IRI or the empty string.',
             'jsonld.SyntaxError', array('context' => $ctx));
         }
         else {
