@@ -1,7 +1,7 @@
 <?php
 /**
  * PHP implementation of the JSON-LD API.
- * Version: 0.0.12
+ * Version: 0.0.13
  *
  * @author Dave Longley
  *
@@ -2645,7 +2645,7 @@ class JsonLdProcessor {
       if(property_exists($ctx, '@base')) {
         $base = $ctx->{'@base'};
         if($base === null) {
-          $rval->{'@base'} = jsonld_parse_url($options['base']);
+          $base = $options['base'];
         }
         else if(!is_string($base)) {
           throw new JsonLdException(
@@ -2659,9 +2659,7 @@ class JsonLdProcessor {
             '@context must be an absolute IRI or the empty string.',
             'jsonld.SyntaxError', array('context' => $ctx));
         }
-        else {
-          $rval->{'@base'} = $base;
-        }
+        $rval->{'@base'} = jsonld_parse_url($base);
         $defined->{'@base'} = true;
       }
 
