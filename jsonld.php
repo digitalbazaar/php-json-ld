@@ -1,7 +1,7 @@
 <?php
 /**
  * PHP implementation of the JSON-LD API.
- * Version: 0.0.13
+ * Version: 0.0.14
  *
  * @author Dave Longley
  *
@@ -5063,6 +5063,7 @@ class JsonLdProcessor {
       return false;
     }
     switch($v) {
+    case '@base':
     case '@context':
     case '@container':
     case '@default':
