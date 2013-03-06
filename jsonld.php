@@ -320,19 +320,25 @@ function jsonld_unregister_rdf_parser($content_type) {
  */
 function jsonld_parse_url($url) {
   $rval = parse_url($url);
-  if(isset($rval['host'])) {
-    if(!isset($rval['path']) || $rval['path'] === '') {
-      $rval['path'] = '/';
-    }
+
+  // malformed url
+  if($rval === false) {
+    $rval = array();
   }
-  else {
-    $rval['host'] = '';
-    if(!isset($rval['path'])) {
-      $rval['path'] = '';
-    }
-  }
+
+  $rval['href'] = $url;
   if(!isset($rval['scheme'])) {
     $rval['scheme'] = '';
+    $rval['protocol'] = '';
+  }
+  else {
+    $rval['protocol'] = $rval['scheme'] . ':';
+  }
+  if(!isset($rval['host'])) {
+    $rval['host'] = '';
+  }
+  if(!isset($rval['path'])) {
+    $rval['path'] = '';
   }
   if(isset($rval['user']) || isset($rval['pass'])) {
     $rval['auth'] = '';
@@ -343,7 +349,73 @@ function jsonld_parse_url($url) {
       $rval['auth'] .= ":{$rval['pass']}";
     }
   }
+  // parse authority for unparsed relative network-path reference
+  if(strpos($rval['href'], ':') === false &&
+    strpos($rval['href'], '//') === 0 && $rval['host'] === '') {
+    // must parse authority from pathname
+    $rval['path'] = substr($rval['path'], 2);
+    $idx = strpos($rval['path'], '/');
+    if($idx === false) {
+      $rval['authority'] = $rval['path'];
+      $rval['path'] = '';
+    }
+    else {
+      $rval['authority'] = substr($rval['path'], 0, $idx);
+      $rval['path'] = substr($rval['path'], $idx);
+    }
+  }
+  else {
+    $rval['authority'] = $rval['host'];
+    if(isset($rval['port'])) {
+      $rval .= ":{$rval['port']}";
+    }
+    if(isset($rval['auth'])) {
+      $rval['authority'] = "{$rval['auth']}@{$rval['authority']}";
+    }
+  }
+  $rval['normalizedPath'] = jsonld_remove_dot_segments(
+    $rval['path'], $rval['authority'] !== '');
+
   return $rval;
+}
+
+/**
+ * Removes dot segments from a URL path.
+ *
+ * @param string $path the path to remove dot segments from.
+ * @param bool $has_authority true if the URL has an authority, false if not.
+ */
+function jsonld_remove_dot_segments($path, $has_authority) {
+  $rval = '';
+
+  if(strpos($path, '/') === 0) {
+    $rval = '/';
+  }
+
+  // RFC 3986 5.2.4 (reworked)
+  $input = explode('/', $path);
+  $output = array();
+  while(count($input) > 0) {
+    if($input[0] === '.' || ($input[0] === '' && count($input) > 1)) {
+      array_shift($input);
+      continue;
+    }
+    if($input[0] === '..') {
+      array_shift($input);
+      if($has_authority ||
+        (count($output) > 0 && $output[count($output) - 1] !== '..')) {
+        array_pop($output);
+      }
+      // leading relative URL '..'
+      else {
+        $output[] = '..';
+      }
+      continue;
+    }
+    $output[] = array_shift($input);
+  }
+
+  return $rval . implode('/', $output);
 }
 
 /**
@@ -365,79 +437,41 @@ function jsonld_prepend_base($base, $iri) {
     $base = jsonld_parse_url($base);
   }
 
-  // if base is empty, do not change iri
-  if($base['scheme'] === '') {
-    return $iri;
-  }
-
-  $authority = $base['host'];
-  if(isset($base['port'])) {
-    $authority .= ":{$base['port']}";
-  }
+  // parse given IRI
   $rel = jsonld_parse_url($iri);
 
-
-  // per RFC3986 normalize slashes and dots in path
-
-  // IRI contains authority
-  if(strpos($iri, '//') === 0) {
-    $path = substr($iri, 2);
-    $authority = substr($path, 0, strrpos($path, '/'));
-    $path = substr($path, strlen($authority));
+  // start hierarchical part
+  $hierPart = $base['protocol'];
+  if($rel['authority']) {
+    $hierPart .= "//{$rel['authority']}";
   }
+  else if($base['href'] !== '') {
+    $hierPart .= "//{$base['authority']}";
+  }
+
+  // per RFC3986 normalize
+
   // IRI represents an absolute path
-  else if(strpos($rel['path'], '/') === 0) {
+  if(strpos($rel['path'], '/') === 0) {
     $path = $rel['path'];
   }
   else {
     $path = $base['path'];
 
-    // prepend last directory for base
+    // append relative path to the end of the last directory from base
     if($rel['path'] !== '') {
       $idx = strrpos($path, '/');
       $idx = ($idx === false) ? 0 : $idx + 1;
-      $path = substr($path, 0, $idx) . $rel['path'];
-    }
-  }
-
-  $segments = explode('/', $path);
-
-  // remove '.' and '' (do not remove trailing empty path)
-  $idx = -1;
-  $end = count($segments) - 1;
-  $filter = function($e) use (&$idx, $end) {
-    $idx += 1;
-    return $e !== '.' && ($e !== '' || $idx === $end);
-  };
-  $segments = array_values(array_filter($segments, $filter));
-
-  // remove as many '..' as possible
-  for($i = 0; $i < count($segments);) {
-    $segment = $segments[$i];
-    if($segment === '..') {
-      // too many reverse dots
-      if($i === 0) {
-        $last = $segments[count($segments) - 1];
-        if($last !== '..') {
-          $segments = array($last);
-        }
-        else {
-          $segments = array();
-        }
-        break;
+      $path = substr($path, 0, $idx);
+      if(strlen($path) > 0 && substr($path, -1) !== '/') {
+        $path .= '/';
       }
-
-      // remove '..' and previous segment
-      array_splice($segments, $i - 1, 2);
-      $segments = array_values($segments);
-      $i -= 1;
-    }
-    else {
-      $i += 1;
+      $path .= $rel['path'];
     }
   }
 
-  $path = implode('/', $segments);
+  // remove slashes and dots in path
+  $path = jsonld_remove_dot_segments($path, $hierPart !== '');
 
   // add query and hash
   if(isset($rel['query'])) {
@@ -447,13 +481,13 @@ function jsonld_prepend_base($base, $iri) {
     $path .= "#{$rel['fragment']}";
   }
 
-  $absolute_iri = "{$base['scheme']}://";
-  if(isset($base['auth'])) {
-    $absolute_iri .= "{$base['auth']}@";
-  }
-  $absolute_iri .= "$authority/$path";
+  $rval = $hierPart . $path;
 
-  return $absolute_iri;
+  if($rval === '') {
+    $rval = './';
+  }
+
+  return $rval;
 }
 
 /**
@@ -470,22 +504,14 @@ function jsonld_remove_base($base, $iri) {
     $base = jsonld_parse_url($base);
   }
 
-  // base is empty
-  if($base['scheme'] === '') {
-    return $iri;
-  }
-
   // establish base root
   $root = '';
-  if($base['scheme'] !== '') {
-    $root = "{$base['scheme']}://";
-    if(isset($base['auth'])) {
-      $root .= "{$base['auth']}@";
-    }
-    $root .= $base['host'];
-    if(isset($base['port'])) {
-      $root .= ":{$base['port']}";
-    }
+  if($base['href'] !== '') {
+    $root .= "{$base['protocol']}//{$base['authority']}";
+  }
+  // support network-path reference with empty base
+  else if(strpos($iri, '//') === false) {
+    $root .= '//';
   }
 
   // IRI not relative to base
@@ -497,8 +523,8 @@ function jsonld_remove_base($base, $iri) {
   $rel = jsonld_parse_url(substr($iri, strlen($root)));
 
   // remove path segments that match
-  $base_segments = explode('/', $base['path']);
-  $iri_segments = explode('/', $rel['path']);
+  $base_segments = explode('/', $base['normalizedPath']);
+  $iri_segments = explode('/', $rel['normalizedPath']);
   while(count($base_segments) > 0 && count($iri_segments) > 0) {
     if($base_segments[0] !== $iri_segments[0]) {
       break;
@@ -511,7 +537,7 @@ function jsonld_remove_base($base, $iri) {
   $rval = '';
   if(count($base_segments) > 0) {
     // do not count the last segment if it isn't a path (doesn't end in '/')
-    if(substr($base['path'], -1) !== '/') {
+    if(substr($base['normalizedPath'], -1) !== '/') {
       array_pop($base_segments);
     }
     foreach($base_segments as $segment) {
