@@ -515,7 +515,7 @@ function jsonld_remove_base($base, $iri) {
   }
 
   // IRI not relative to base
-  if(strpos($iri, $root) !== 0) {
+  if($root === '' || strpos($iri, $root) !== 0) {
     return $iri;
   }
 
