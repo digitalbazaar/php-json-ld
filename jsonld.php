@@ -3952,11 +3952,9 @@ class JsonLdProcessor {
       return $iri;
     }
 
-    // term is a keyword
+    // term is a keyword, default vocab to true
     if(self::_isKeyword($iri)) {
-      // return alias if available
-      $aliases = $active_ctx->keywords->{$iri};
-      return (count($aliases) > 0) ? $aliases[0] : $iri;
+      $relative_to['vocab'] = true;
     }
 
     // use inverse context to pick a term if iri is relative to vocab
@@ -4253,14 +4251,9 @@ class JsonLdProcessor {
         'jsonld.SyntaxError', array('context' => $local_ctx));
     }
 
-    if(property_exists($active_ctx->mappings, $term) &&
-        $active_ctx->mappings->{$term} !== null) {
-      // if term is a keyword alias, remove it
-      $kw = $active_ctx->mappings->{$term}->{'@id'};
-      if(self::_isKeyword($kw)) {
-        array_splice($active_ctx->keywords->{$kw},
-        array_search($term, $active_ctx->keywords->{$kw}), 1);
-      }
+    // remove old mapping
+    if(property_exists($active_ctx->mappings, $term)) {
+      unset($active_ctx->mappings->{$term});
     }
 
     // get context term value
@@ -4287,16 +4280,9 @@ class JsonLdProcessor {
             'Invalid JSON-LD syntax; @context and @preserve cannot be aliased.',
             'jsonld.SyntaxError');
         }
-
-        // uniquely add term as a keyword alias and resort
-        if(!in_array($term, $active_ctx->keywords->{$value})) {
-          $active_ctx->keywords->{$value}[] = $term;
-          usort($active_ctx->keywords->{$value},
-            array($this, '_compareShortestLeast'));
-        }
       }
 
-      // define/redefine term to expanded IRI/keyword
+      // define term to expanded IRI/keyword
       $active_ctx->mappings->{$term} = (object)array('@id' => $id);
       $defined->{$term} = true;
       return;
@@ -4710,23 +4696,6 @@ class JsonLdProcessor {
     return (object)array(
       '@base' => jsonld_parse_url($options['base']),
       'mappings' => new stdClass(),
-      'keywords' => (object)array(
-        '@context' => array(),
-        '@container' => array(),
-        '@default' => array(),
-        '@embed' => array(),
-        '@explicit' => array(),
-        '@graph' => array(),
-        '@id' => array(),
-        '@index' => array(),
-        '@language' => array(),
-        '@list' => array(),
-        '@omitDefault' => array(),
-        '@preserve' => array(),
-        '@set' => array(),
-        '@type' => array(),
-        '@value' => array(),
-        '@vocab' => array()),
       'namer' => $namer,
       'inverse' => null);
   }
@@ -4844,7 +4813,6 @@ class JsonLdProcessor {
   protected function _cloneActiveContext($active_ctx) {
     $child = new stdClass();
     $child->{'@base'} = $active_ctx->{'@base'};
-    $child->keywords = self::copy($active_ctx->keywords);
     $child->mappings = self::copy($active_ctx->mappings);
     $child->namer = $active_ctx->namer;
     $child->inverse = null;
@@ -4869,7 +4837,6 @@ class JsonLdProcessor {
   public function _shareActiveContext($active_ctx) {
     $rval = new stdClass();
     $rval->{'@base'} = $active_ctx->{'@base'};
-    $rval->keywords = $active_ctx->keywords;
     $rval->mappings = $active_ctx->mappings;
     if($active_ctx->namer !== null) {
       $rval->namer = new UniqueNamer('_:b');
@@ -4909,6 +4876,7 @@ class JsonLdProcessor {
     case '@list':
     case '@omitDefault':
     case '@preserve':
+    case '@reverse':
     case '@set':
     case '@type':
     case '@value':
