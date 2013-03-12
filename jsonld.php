@@ -1,7 +1,7 @@
 <?php
 /**
  * PHP implementation of the JSON-LD API.
- * Version: 0.0.16
+ * Version: 0.0.17
  *
  * @author Dave Longley
  *
@@ -1698,6 +1698,9 @@ class JsonLdProcessor {
         return $this->_compactValue($active_ctx, $active_property, $element);
       }
 
+      // FIXME: avoid misuse of active property as an expanded property?
+      $inside_reverse = ($active_property === '@reverse');
+
       // process element keys in order
       $keys = array_keys((array)$element);
       sort($keys);
@@ -1732,6 +1735,35 @@ class JsonLdProcessor {
           continue;
         }
 
+        // handle @reverse
+        if($expanded_property === '@reverse') {
+          // recursively compact expanded value
+          $compacted_value = $this->_compact(
+            $active_ctx, '@reverse', $expanded_value, $options);
+
+          // handle double-reversed properties
+          foreach($compacted_value as $compacted_property => $value) {
+            if(property_exists($active_ctx->mappings, $compacted_property) &&
+              $active_ctx->mappings->{$compacted_property} &&
+              $active_ctx->mappings->{$compacted_property}->reverse) {
+              if(!property_exists($rval, $compacted_property) &&
+                !$options['compactArrays']) {
+                $rval->{$compacted_property} = array();
+              }
+              self::addValue($rval, $compacted_property, $value);
+              unset($compacted_value->{$compacted_property});
+            }
+          }
+
+          if(count(array_keys((array)$compacted_value)) > 0) {
+            // use keyword alias and add value
+            $alias = $this->_compactIri($active_ctx, $expanded_property);
+            self::addValue($rval, $alias, $compacted_value);
+          }
+
+          continue;
+        }
+
         // handle @index property
         if($expanded_property === '@index') {
           // drop @index if inside an @index container
@@ -1753,7 +1785,7 @@ class JsonLdProcessor {
         if(count($expanded_value) === 0) {
           $item_active_property = $this->_compactIri(
             $active_ctx, $expanded_property, $expanded_value,
-            array('vocab' => true));
+            array('vocab' => true), $inside_reverse);
           self::addValue(
             $rval, $item_active_property, array(),
             array('propertyIsArray' => true));
@@ -1764,7 +1796,7 @@ class JsonLdProcessor {
           // compact property and get container type
           $item_active_property = $this->_compactIri(
             $active_ctx, $expanded_property, $expanded_item,
-            array('vocab' => true));
+            array('vocab' => true), $inside_reverse);
           $container = self::getContextValue(
             $active_ctx, $item_active_property, '@container');
 
@@ -1939,6 +1971,14 @@ class JsonLdProcessor {
           continue;
         }
 
+        if(self::_isKeyword($expanded_property) &&
+          $expanded_active_property === '@reverse') {
+          throw new JsonLdException(
+            'Invalid JSON-LD syntax; a keyword cannot be used as a @reverse ' .
+            'property.',
+            'jsonld.SyntaxError', array('value' => $value));
+        }
+
         // syntax error if @id is not a string
         if($expanded_property === '@id' && !is_string($value)) {
           throw new JsonLdException(
@@ -1978,13 +2018,67 @@ class JsonLdProcessor {
           $value = strtolower($value);
         }
 
-        // preserve @index
+        // @index must be a string
         if($expanded_property === '@index') {
           if(!is_string($value)) {
             throw new JsonLdException(
               'Invalid JSON-LD syntax; "@index" value must be a string.',
               'jsonld.SyntaxError', array('value' => $value));
           }
+        }
+
+        // @reverse must be an object
+        if($expanded_property === '@reverse') {
+          if(!is_object($value)) {
+            throw new JsonLdException(
+              'Invalid JSON-LD syntax; "@reverse" value must be an object.',
+              'jsonld.SyntaxError', array('value' => $value));
+          }
+
+          $expanded_value = $this->_expand(
+            $active_ctx, '@reverse', $value, $options, $inside_list);
+
+          // properties double-reversed
+          if(property_exists($expanded_value, '@reverse')) {
+            foreach($expanded_value->{'@reverse'} as $rproperty => $rvalue) {
+              self::addValue(
+                $rval, $rproperty, $rvalue, array('propertyIsArray' => true));
+            }
+          }
+
+          // FIXME: can this be merged with code below to simplify?
+          // merge in all reversed properties
+          if(property_exists($rval, '@reverse')) {
+            $reverse_map = $rval->{'@reverse'};
+          }
+          else {
+            $reverse_map = null;
+          }
+          foreach($expanded_value as $property => $items) {
+            if($property === '@reverse') {
+              continue;
+            }
+            if($reverse_map === null) {
+              $reverse_map = $rval->{'@reverse'} = new stdClass();
+            }
+            self::addValue(
+              $reverse_map, $property, array(),
+              array('propertyIsArray' => true));
+            foreach($items as $item) {
+              if(self::_isValue($item) || self::_isList($item)) {
+                throw new JsonLdException(
+                  'Invalid JSON-LD syntax; "@reverse" value must not be a ' +
+                  '@value or an @list.',
+                  'jsonld.SyntaxError',
+                  array('value' => $expanded_value));
+              }
+              self::addValue(
+                $reverse_map, $property, $item,
+                array('propertyIsArray' => true));
+            }
+          }
+
+          continue;
         }
 
         $container = self::getContextValue($active_ctx, $key, '@container');
@@ -2050,6 +2144,27 @@ class JsonLdProcessor {
           // ensure expanded value is an array
           $expanded_value = (object)array(
             '@list' => self::arrayify($expanded_value));
+        }
+
+        // FIXME: can this be merged with code above to simplify?
+        // merge in reverse properties
+        if(property_exists($active_ctx->mappings, $key) &&
+          $active_ctx->mappings->{$key} &&
+          $active_ctx->mappings->{$key}->reverse) {
+          $reverse_map = $rval->{'@reverse'} = new stdClass();
+          $expanded_value = self::arrayify($expanded_value);
+          foreach($expanded_value as $item) {
+            if(self::_isValue($item) || self::_isList($item)) {
+              throw new JsonLdException(
+                'Invalid JSON-LD syntax; "@reverse" value must not be a ' +
+                '@value or an @list.',
+                'jsonld.SyntaxError', array('value' => $expanded_value));
+            }
+            self::addValue(
+              $reverse_map, $expanded_property, $item,
+              array('propertyIsArray' => true));
+          }
+          continue;
         }
 
         // add value for property
@@ -3138,6 +3253,21 @@ class JsonLdProcessor {
         continue;
       }
 
+      // handle reverse properties
+      if($property === '@reverse') {
+        $referenced_node = (object)array('@id' => $name);
+        $reverse_map = $input->{'@reverse'};
+        foreach($reverse_map as $reverse_property => $items) {
+          foreach($items as $item) {
+            self::addValue(
+              $item, $reverse_property, $referenced_node,
+              array('propertyIsArray' => true, 'allowDuplicate' => false));
+            $this->_createNodeMap($item, $graphs, $graph, $namer);
+          }
+        }
+        continue;
+      }
+
       // recurse into graph
       if($property === '@graph') {
         // add graph subjects map entry
@@ -3152,6 +3282,11 @@ class JsonLdProcessor {
 
       // copy non-@type keywords
       if($property !== '@type' && self::_isKeyword($property)) {
+        if($property === '@index' && property_exists($subject, '@index')) {
+          throw new JsonLdException(
+            'Invalid JSON-LD syntax; conflicting @index property detected.',
+            'jsonld.SyntaxError', array('subject' => $subject));
+        }
         $subject->{$property} = $input->{$property};
         continue;
       }
@@ -3879,14 +4014,21 @@ class JsonLdProcessor {
   protected function _selectTerm(
     $active_ctx, $iri, $value, $containers,
     $type_or_language, $type_or_language_value) {
-    $containers[] = '@none';
     if($type_or_language_value === null) {
       $type_or_language_value = '@null';
     }
 
-    // options for the value of @type or @language,
-    // determine for @id based on whether or not value compacts to a term
-    if($type_or_language_value === '@id' && self::_isSubjectReference($value)) {
+    // options for the value of @type or @language
+    $prefs = array();
+
+    // determine prefs for @id based on whether or not value compacts to a term
+    if(($type_or_language_value === '@id' ||
+      $type_or_language_value === '@reverse') &&
+      self::_isSubjectReference($value)) {
+      // prefer @reverse first
+      if($type_or_language_value === '@reverse') {
+        $prefs[] = '@reverse';
+      }
       // try to compact value to a term
       $term = $this->_compactIri(
         $active_ctx, $value->{'@id'}, null, array('vocab' => true));
@@ -3894,16 +4036,17 @@ class JsonLdProcessor {
         $active_ctx->mappings->{$term} &&
         $active_ctx->mappings->{$term}->{'@id'} === $value->{'@id'}) {
         // prefer @vocab
-        $options = array('@vocab', '@id', '@none');
+        array_push($prefs, '@vocab', '@id');
       }
       else {
         // prefer @id
-        $options = array('@id', '@vocab', '@none');
+        array_push($prefs, '@id', '@vocab');
       }
     }
     else {
-      $options = array($type_or_language_value, '@none');
+      $prefs[] = $type_or_language_value;
     }
+    $prefs[] = '@none';
 
     $term = null;
     $container_map = $active_ctx->inverse->{$iri};
@@ -3919,14 +4062,14 @@ class JsonLdProcessor {
 
       $type_or_language_value_map =
         $container_map->{$container}->{$type_or_language};
-      foreach($options as $option) {
+      foreach($prefs as $pref) {
         // if type/language option not available in the map, continue
-        if(!property_exists($type_or_language_value_map, $option)) {
+        if(!property_exists($type_or_language_value_map, $pref)) {
           continue;
         }
 
         // select term
-        $term = $type_or_language_value_map->{$option};
+        $term = $type_or_language_value_map->{$pref};
         break;
       }
     }
@@ -3942,11 +4085,13 @@ class JsonLdProcessor {
    * @param mixed $value the value to check or null.
    * @param assoc $relative_to options for how to compact IRIs:
    *          vocab: true to split after @vocab, false not to.
+   * @param bool $reverse true if a reverse property is being compacted, false
+   *          if not.
    *
    * @return string the compacted term, prefix, keyword alias, or original IRI.
    */
   protected function _compactIri(
-    $active_ctx, $iri, $value=null, $relative_to=array()) {
+    $active_ctx, $iri, $value=null, $relative_to=array(), $reverse=false) {
     // can't compact null
     if($iri === null) {
       return $iri;
@@ -3975,8 +4120,13 @@ class JsonLdProcessor {
       $type_or_language = '@language';
       $type_or_language_value = '@null';
 
+      if($reverse) {
+        $type_or_language = '@type';
+        $type_or_language_value = '@reverse';
+        $containers[] = '@set';
+      }
       // choose the most specific term that works for all elements in @list
-      if(self::_isList($value)) {
+      else if(self::_isList($value)) {
         // only select @list containers if @index is NOT in value
         if(!property_exists($value, '@index')) {
           $containers[] = '@list';
@@ -4055,6 +4205,7 @@ class JsonLdProcessor {
       }
 
       // do term selection
+      $containers[] = '@none';
       $term = $this->_selectTerm(
         $active_ctx, $iri, $value,
         $containers, $type_or_language, $type_or_language_value);
@@ -4283,7 +4434,8 @@ class JsonLdProcessor {
       }
 
       // define term to expanded IRI/keyword
-      $active_ctx->mappings->{$term} = (object)array('@id' => $id);
+      $active_ctx->mappings->{$term} = (object)array(
+        '@id' => $id, 'reverse' => false);
       $defined->{$term} = true;
       return;
     }
@@ -4297,8 +4449,32 @@ class JsonLdProcessor {
 
     // create new mapping
     $mapping = new stdClass();
+    $mapping->reverse = false;
 
-    if(property_exists($value, '@id')) {
+    if(property_exists($value, '@reverse')) {
+      if(property_exists($value, '@id') ||
+        property_exists($value, '@type') ||
+        property_exists($value, '@language')) {
+        throw new JsonLdException(
+          'Invalid JSON-LD syntax; a @reverse term definition must not ' +
+          'contain @id, @type, or @language.',
+          'jsonld.SyntaxError', array('context' => $local_ctx));
+      }
+      $reverse = $value->{'@reverse'};
+      if(!is_string($reverse)) {
+        throw new JsonLdException(
+          'Invalid JSON-LD syntax; a @context @reverse value must be a string.',
+          'jsonld.SyntaxError', array('context' => $local_ctx));
+      }
+
+      // expand and add @id mapping, set @type to @id
+      $mapping->{'@id'} = $this->_expandIri(
+        $active_ctx, $reverse, array('vocab' => true, 'base' => true),
+        $local_ctx, $defined);
+      $mapping->{'@type'} = '@id';
+      $mapping->reverse = true;
+    }
+    else if(property_exists($value, '@id')) {
       $id = $value->{'@id'};
       if(!is_string($id)) {
         throw new JsonLdException(
@@ -4306,12 +4482,10 @@ class JsonLdProcessor {
           'of strings or a string.',
           'jsonld.SyntaxError', array('context' => $local_ctx));
       }
-      else {
-        // add @id to mapping
-        $mapping->{'@id'} = $this->_expandIri(
-          $active_ctx, $id, array('vocab' => true, 'base' => true),
-          $local_ctx, $defined);
-      }
+      // add @id to mapping
+      $mapping->{'@id'} = $this->_expandIri(
+        $active_ctx, $id, array('vocab' => true, 'base' => true),
+        $local_ctx, $defined);
     }
     else {
       // see if the term has a prefix
@@ -4375,6 +4549,12 @@ class JsonLdProcessor {
         throw new JsonLdException(
           'Invalid JSON-LD syntax; @context @container value must be ' .
           'one of the following: @list, @set, @index, or @language.',
+          'jsonld.SyntaxError', array('context' => $local_ctx));
+      }
+      if($mapping->reverse && $container !== '@index') {
+        throw new JsonLdException(
+          'Invalid JSON-LD syntax; @context @container value for a @reverse ' +
+          'type definition must be @index.',
           'jsonld.SyntaxError', array('context' => $local_ctx));
       }
 
@@ -4754,35 +4934,37 @@ class JsonLdProcessor {
         }
         $entry = $container_map->{$container};
 
-        // consider updating @language entry if @type is not specified
-        if(!property_exists($mapping, '@type')) {
-          // if a @language is specified, update its specific entry
-          if(property_exists($mapping, '@language')) {
-            $language = $mapping->{'@language'};
-            if($language === null) {
-              $language = '@null';
-            }
-            $this->_addPreferredTerm(
-              $mapping, $term, $entry->{'@language'}, $language);
-          }
-          // add an entry for the default language and for no @language
-          else {
-            $this->_addPreferredTerm(
-              $mapping, $term, $entry->{'@language'}, $default_language);
-            $this->_addPreferredTerm(
-              $mapping, $term, $entry->{'@language'}, '@none');
-          }
+        // term is preferred for values using @reverse
+        if($mapping->reverse) {
+          $this->_addPreferredTerm(
+            $mapping, $term, $entry->{'@type'}, '@reverse');
         }
+        // term is preferred for values using specific type
+        else if(property_exists($mapping, '@type')) {
+          $this->_addPreferredTerm(
+            $mapping, $term, $entry->{'@type'}, $mapping->{'@type'});
+        }
+        // term is preferred for values using specific language
+        else if(property_exists($mapping, '@language')) {
+          $language = $mapping->{'@language'};
+          if($language === null) {
+            $language = '@null';
+          }
+          $this->_addPreferredTerm(
+            $mapping, $term, $entry->{'@language'}, $language);
+        }
+        // term is preferred for values w/default language or no type and
+        // no language
+        else {
+          // add an entry for the default language
+          $this->_addPreferredTerm(
+            $mapping, $term, $entry->{'@language'}, $default_language);
 
-        // consider updating @type entry if @language is not specified
-        if(!property_exists($mapping, '@language')) {
-          if(property_exists($mapping, '@type')) {
-            $type = $mapping->{'@type'};
-          }
-          else {
-            $type = '@none';
-          }
-          $this->_addPreferredTerm($mapping, $term, $entry->{'@type'}, $type);
+          // add entries for no type and no language
+          $this->_addPreferredTerm(
+            $mapping, $term, $entry->{'@type'}, '@none');
+          $this->_addPreferredTerm(
+            $mapping, $term, $entry->{'@language'}, '@none');
         }
       }
     }
