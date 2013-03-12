@@ -367,7 +367,7 @@ function jsonld_parse_url($url) {
   else {
     $rval['authority'] = $rval['host'];
     if(isset($rval['port'])) {
-      $rval .= ":{$rval['port']}";
+      $rval['authority'] .= ":{$rval['port']}";
     }
     if(isset($rval['auth'])) {
       $rval['authority'] = "{$rval['auth']}@{$rval['authority']}";
