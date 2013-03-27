@@ -1,7 +1,7 @@
 <?php
 /**
  * PHP implementation of the JSON-LD API.
- * Version: 0.0.17
+ * Version: 0.0.18
  *
  * @author Dave Longley
  *
@@ -620,8 +620,6 @@ class JsonLdProcessor {
     // set default options
     isset($options['base']) or $options['base'] = '';
     isset($options['strict']) or $options['strict'] = true;
-    isset($options['renameBlankNodes']) or $options['renameBlankNodes'] =
-      true;
     isset($options['compactArrays']) or $options['compactArrays'] = true;
     isset($options['graph']) or $options['graph'] = false;
     isset($options['skipExpansion']) or $options['skipExpansion'] = false;
@@ -735,8 +733,6 @@ class JsonLdProcessor {
    * @param mixed $input the JSON-LD object to expand.
    * @param assoc $options the options to use:
    *          [base] the base IRI to use.
-   *          [renameBlankNodes] true to rename blank nodes, false not to,
-   *            defaults to true.
    *          [keepFreeFloatingNodes] true to keep free-floating nodes,
    *            false not to, defaults to false.
    *          [loadContext(url)] the context loader.
@@ -746,8 +742,6 @@ class JsonLdProcessor {
   public function expand($input, $options) {
     // set default options
     isset($options['base']) or $options['base'] = '';
-    isset($options['renameBlankNodes']) or $options['renameBlankNodes'] =
-      true;
     isset($options['keepFreeFloatingNodes']) or
       $options['keepFreeFloatingNodes'] = false;
     isset($options['loadContext']) or $options['loadContext'] =
@@ -1062,8 +1056,6 @@ class JsonLdProcessor {
    * @param stdClass $active_ctx the current active context.
    * @param mixed $local_ctx the local context to process.
    * @param assoc $options the options to use:
-   *          [renameBlankNodes] true to rename blank nodes, false not to,
-   *            defaults to true.
    *          [loadContext(url)] the context loader.
    *
    * @return stdClass the new active context.
@@ -1071,8 +1063,6 @@ class JsonLdProcessor {
   public function processContext($active_ctx, $local_ctx, $options) {
     // set default options
     isset($options['base']) or $options['base'] = '';
-    isset($options['renameBlankNodes']) or $options['renameBlankNodes'] =
-      true;
     isset($options['loadContext']) or $options['loadContext'] =
       'jsonld_get_url';
 
@@ -2695,7 +2685,6 @@ class JsonLdProcessor {
     if(property_exists($jsonld_cache, 'activeCtx')) {
       $rval = $jsonld_cache->activeCtx->get($active_ctx, $local_ctx);
       if($rval) {
-        $rval->namer = $active_ctx->namer;
         return $rval;
       }
     }
@@ -2715,7 +2704,6 @@ class JsonLdProcessor {
       // reset to initial context
       if($ctx === null) {
         $rval = $this->_getInitialContext($options);
-        $rval->namer = $active_ctx->namer;
         continue;
       }
 
@@ -2933,10 +2921,6 @@ class JsonLdProcessor {
 
     // other type
     if($type !== null) {
-      // rename blank node if requested
-      if($active_ctx->namer !== null && strpos($type, '_:') === 0) {
-        $type = $active_ctx->namer->getName($type);
-      }
       $rval->{'@type'} = $type;
     }
     // check for language tagging for strings
@@ -4614,8 +4598,6 @@ class JsonLdProcessor {
       $this->_createTermDefinition($active_ctx, $local_ctx, $value, $defined);
     }
 
-    $rval = null;
-
     if(isset($relative_to['vocab']) && $relative_to['vocab']) {
       if(property_exists($active_ctx->mappings, $value)) {
         $mapping = $active_ctx->mappings->{$value};
@@ -4626,55 +4608,44 @@ class JsonLdProcessor {
         }
 
         // value is a term
-        $rval = $mapping->{'@id'};
+        return $mapping->{'@id'};
       }
     }
 
-    if($rval === null) {
-      // split value into prefix:suffix
-      $colon = strpos($value, ':');
-      if($colon !== false) {
-        $prefix = substr($value, 0, $colon);
-        $suffix = substr($value, $colon + 1);
+    // split value into prefix:suffix
+    $colon = strpos($value, ':');
+    if($colon !== false) {
+      $prefix = substr($value, 0, $colon);
+      $suffix = substr($value, $colon + 1);
 
-        // do not expand blank nodes (prefix of '_') or already-absolute
-        // IRIs (suffix of '//')
-        if($prefix !== '_' && strpos($suffix, '//') !== 0) {
-          // prefix dependency not defined, define it
-          if($local_ctx !== null && property_exists($local_ctx, $prefix)) {
-            $this->_createTermDefinition(
-              $active_ctx, $local_ctx, $prefix, $defined);
-          }
+      // do not expand blank nodes (prefix of '_') or already-absolute
+      // IRIs (suffix of '//')
+      if($prefix !== '_' && strpos($suffix, '//') !== 0) {
+        // prefix dependency not defined, define it
+        if($local_ctx !== null && property_exists($local_ctx, $prefix)) {
+          $this->_createTermDefinition(
+            $active_ctx, $local_ctx, $prefix, $defined);
+        }
 
-          // use mapping if prefix is defined
-          if(property_exists($active_ctx->mappings, $prefix)) {
-            $mapping = $active_ctx->mappings->{$prefix};
-            if($mapping) {
-              $rval = $mapping->{'@id'} . $suffix;
-            }
+        // use mapping if prefix is defined
+        if(property_exists($active_ctx->mappings, $prefix)) {
+          $mapping = $active_ctx->mappings->{$prefix};
+          if($mapping) {
+            return $mapping->{'@id'} . $suffix;
           }
         }
       }
     }
 
-    if($rval === null) {
-      $rval = $value;
+    // already absolute IRI
+    if(self::_isAbsoluteIri($value)) {
+      return $value;
     }
 
-    // keywords need no expanding (aliasing already handled by now)
-    if(self::_isKeyword($rval)) {
-      return $rval;
-    }
+    $rval = $value;
 
-    if(self::_isAbsoluteIri($rval)) {
-      // rename blank node if requested
-      if(!$local_ctx && strpos($rval, '_:') === 0 &&
-        $active_ctx->namer !== null) {
-        $rval = $active_ctx->namer->getName($rval);
-      }
-    }
     // prepend vocab
-    else if(isset($relative_to['vocab']) && $relative_to['vocab'] &&
+    if(isset($relative_to['vocab']) && $relative_to['vocab'] &&
       property_exists($active_ctx, '@vocab')) {
       $rval = $active_ctx->{'@vocab'} . $rval;
     }
@@ -4869,14 +4840,9 @@ class JsonLdProcessor {
    * @return stdClass the initial context.
    */
   protected function _getInitialContext($options) {
-    $namer = null;
-    if(isset($options['renameBlankNodes']) && $options['renameBlankNodes']) {
-      $namer = new UniqueNamer('_:b');
-    }
     return (object)array(
       '@base' => jsonld_parse_url($options['base']),
       'mappings' => new stdClass(),
-      'namer' => $namer,
       'inverse' => null);
   }
 
@@ -4996,7 +4962,6 @@ class JsonLdProcessor {
     $child = new stdClass();
     $child->{'@base'} = $active_ctx->{'@base'};
     $child->mappings = self::copy($active_ctx->mappings);
-    $child->namer = $active_ctx->namer;
     $child->inverse = null;
     if(property_exists($active_ctx, '@language')) {
       $child->{'@language'} = $active_ctx->{'@language'};
@@ -5020,9 +4985,6 @@ class JsonLdProcessor {
     $rval = new stdClass();
     $rval->{'@base'} = $active_ctx->{'@base'};
     $rval->mappings = $active_ctx->mappings;
-    if($active_ctx->namer !== null) {
-      $rval->namer = new UniqueNamer('_:b');
-    }
     $rval->inverse = $active_ctx->inverse;
     if(property_exists($active_ctx, '@language')) {
       $rval->{'@language'} = $active_ctx->{'@language'};
