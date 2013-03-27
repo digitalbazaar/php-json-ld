@@ -4635,22 +4635,20 @@ class JsonLdProcessor {
           }
         }
       }
-    }
 
-    // already absolute IRI
-    if(self::_isAbsoluteIri($value)) {
+      // already absolute IRI
       return $value;
     }
-
-    $rval = $value;
 
     // prepend vocab
     if(isset($relative_to['vocab']) && $relative_to['vocab'] &&
       property_exists($active_ctx, '@vocab')) {
-      $rval = $active_ctx->{'@vocab'} . $rval;
+      return $active_ctx->{'@vocab'} . $value;
     }
+
     // prepend base
-    else if(isset($relative_to['base']) && $relative_to['base']) {
+    $rval = $value;
+    if(isset($relative_to['base']) && $relative_to['base']) {
       $rval = jsonld_prepend_base($active_ctx->{'@base'}, $rval);
     }
 
