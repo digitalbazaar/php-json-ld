@@ -1,7 +1,7 @@
 <?php
 /**
  * PHP implementation of the JSON-LD API.
- * Version: 0.0.18
+ * Version: 0.0.19
  *
  * @author Dave Longley
  *
@@ -3182,20 +3182,18 @@ class JsonLdProcessor {
       return;
     }
 
-    // add entries for @type
-    if(property_exists($input, '@type')) {
-      $types = $input->{'@type'};
-      $types = self::arrayify($types);
-      foreach($types as $type) {
-        $id = (strpos($type, '_:') === 0) ? $namer->getName($type) : $type;
-        if(!property_exists($graphs->{$graph}, $id)) {
-          $graphs->{$graph}->{$id} = (object)array('@id' => $id);
+    // add values to list
+    if(self::_isValue($input)) {
+      if(property_exists($input, '@type')) {
+        $type = $input->{'@type'};
+        // rename @type blank node
+        if(strpos($type, '_:') === 0) {
+          $type = $input->{'@type'} = $namer->getName($type);
+        }
+        if(!property_exists($graphs->{$graph}, $type)) {
+          $graphs->{$graph}->{$type} = (object)array('@id' => $type);
         }
       }
-    }
-
-    // add add values to list
-    if(self::_isValue($input)) {
       if($list !== null) {
         $list[] = $input;
       }
@@ -3283,6 +3281,14 @@ class JsonLdProcessor {
         continue;
       }
       foreach($objects as $o) {
+        if($property === '@type') {
+          // rename @type blank nodes
+          $o = (strpos($o, '_:') === 0) ? $namer->getName($o) : $o;
+          if(!property_exists($graphs->{$graph}, $o)) {
+            $graphs->{$graph}->{$o} = (object)array('@id' => $o);
+          }
+        }
+
         // handle embedded subject or subject reference
         if(self::_isSubject($o) || self::_isSubjectReference($o)) {
           // rename blank node @id
