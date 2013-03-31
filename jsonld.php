@@ -1,7 +1,7 @@
 <?php
 /**
  * PHP implementation of the JSON-LD API.
- * Version: 0.0.19
+ * Version: 0.0.20
  *
  * @author Dave Longley
  *
@@ -194,7 +194,7 @@ function jsonld_set_context_loader($load_context) {
 /**
  * Retrieves JSON-LD at the given URL.
  *
- * @param string $url the URL to to retrieve.
+ * @param string $url the URL to retrieve.
  *
  * @return the JSON-LD.
  */
@@ -1243,7 +1243,7 @@ class JsonLdProcessor {
     if(count($values) === 0) {
       self::removeProperty($subject, $property);
     }
-    else if(count($values) === 1 && !$options['property_is_array']) {
+    else if(count($values) === 1 && !$options['propertyIsArray']) {
       $subject->{$property} = $values[0];
     }
     else {
