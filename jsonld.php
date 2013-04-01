@@ -2614,9 +2614,7 @@ class JsonLdProcessor {
     }
 
     // build @lists
-    $all_graphs = array_values((array)$graphs);
-    $all_graphs[] = $default_graph;
-    foreach($all_graphs as $graph) {
+    foreach($graphs as $graph_name => $graph) {
       // find list head
       $list_map = $graph->listMap;
       foreach($list_map as $subject => $entry) {
