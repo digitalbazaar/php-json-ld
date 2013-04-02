@@ -1259,7 +1259,7 @@ class JsonLdProcessor {
    * 2. They are both @values with the same @value, @type, @language,
    *   and @index, OR
    * 3. They are both @lists with the same @list and @index, OR
-   * 4. They both have @ids they are the same.
+   * 4. They both have @ids that are the same.
    *
    * @param mixed $v1 the first value.
    * @param mixed $v2 the second value.
@@ -1665,7 +1665,6 @@ class JsonLdProcessor {
         // compact, dropping any null values
         $compacted = $this->_compact(
           $active_ctx, $active_property, $e, $options);
-        // drop null values
         if($compacted !== null) {
           $rval[] = $compacted;
         }
@@ -1852,7 +1851,7 @@ class JsonLdProcessor {
           }
           else {
             // use an array if: compactArrays flag is false,
-            // @container is @set or @list , value is an empty
+            // @container is @set or @list, value is an empty
             // array, or key is @graph
             $is_array = (!$options['compactArrays'] ||
               $container === '@set' || $container === '@list' ||
@@ -1925,7 +1924,8 @@ class JsonLdProcessor {
     if(is_object($element)) {
       // if element has a context, process it
       if(property_exists($element, '@context')) {
-        $active_ctx = $this->_processContext($active_ctx, $element->{'@context'}, $options);
+        $active_ctx = $this->_processContext(
+          $active_ctx, $element->{'@context'}, $options);
       }
 
       // expand the active property
