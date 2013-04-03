@@ -3301,7 +3301,7 @@ class JsonLdProcessor {
             array('propertyIsArray' => true, 'allowDuplicate' => false));
           $this->_createNodeMap($o, $graphs, $graph, $namer, $id, null);
         }
-        // handle $list
+        // handle @list
         else if(self::_isList($o)) {
           $_list = new ArrayObject();
           $this->_createNodeMap(
@@ -4036,13 +4036,8 @@ class JsonLdProcessor {
     }
     $prefs[] = '@none';
 
-    $term = null;
     $container_map = $active_ctx->inverse->{$iri};
     foreach($containers as $container) {
-      if($term !== null) {
-        break;
-      }
-
       // if container not available in the map, continue
       if(!property_exists($container_map, $container)) {
         continue;
@@ -4057,11 +4052,10 @@ class JsonLdProcessor {
         }
 
         // select term
-        $term = $type_or_language_value_map->{$pref};
-        break;
+        return $type_or_language_value_map->{$pref};
       }
     }
-    return $term;
+    return null;
   }
 
   /**
