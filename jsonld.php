@@ -4280,7 +4280,7 @@ class JsonLdProcessor {
       $preserve_index = (property_exists($value, '@index') &&
         $container !== '@index');
 
-      // if there's no @index to preserve ...
+      // if there's no @index to preserve
       if(!$preserve_index) {
         // matching @type or @language specified in context, compact value
         if(self::_hasKeyValue($value, '@type', $type) ||
@@ -4411,7 +4411,7 @@ class JsonLdProcessor {
         if($value === '@context' || $value === '@preserve') {
           throw new JsonLdException(
             'Invalid JSON-LD syntax; @context and @preserve cannot be aliased.',
-            'jsonld.SyntaxError');
+            'jsonld.SyntaxError', array('context' => $local_ctx));
         }
       }
 
@@ -4460,8 +4460,7 @@ class JsonLdProcessor {
       $id = $value->{'@id'};
       if(!is_string($id)) {
         throw new JsonLdException(
-          'Invalid JSON-LD syntax; @context @id value must be an array ' .
-          'of strings or a string.',
+          'Invalid JSON-LD syntax; @context @id value must be a string.',
           'jsonld.SyntaxError', array('context' => $local_ctx));
       }
       // add @id to mapping
