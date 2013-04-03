@@ -1,7 +1,7 @@
 <?php
 /**
  * PHP implementation of the JSON-LD API.
- * Version: 0.0.20
+ * Version: 0.0.21
  *
  * @author Dave Longley
  *
@@ -4850,6 +4850,11 @@ class JsonLdProcessor {
    * @return stdClass the inverse context.
    */
   protected function _getInverseContext($active_ctx) {
+    // inverse context already generated
+    if($active_ctx->inverse) {
+      return $active_ctx->inverse;
+    }
+
     $inverse = $active_ctx->inverse = new stdClass();
 
     // handle default language
