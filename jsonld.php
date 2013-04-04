@@ -1,7 +1,7 @@
 <?php
 /**
  * PHP implementation of the JSON-LD API.
- * Version: 0.0.23
+ * Version: 0.0.24
  *
  * @author Dave Longley
  *
@@ -1072,13 +1072,14 @@ class JsonLdProcessor {
     }
 
     // retrieve URLs in local_ctx
-    $ctx = self::copy($local_ctx);
-    if(is_object($ctx) && !property_exists($ctx, '@context')) {
-      $ctx = (object)array('@context' => $ctx);
+    $local_ctx = self::copy($local_ctx);
+    if(is_string($local_ctx) or (
+      is_object($local_ctx) && !property_exists($local_ctx, '@context'))) {
+      $local_ctx = (object)array('@context' => $local_ctx);
     }
     try {
       $this->_retrieveContextUrls(
-        $ctx, new stdClass(), $options['loadContext'], $options['base']);
+        $local_ctx, new stdClass(), $options['loadContext'], $options['base']);
     }
     catch(Exception $e) {
       throw new JsonLdException(
@@ -1087,7 +1088,7 @@ class JsonLdProcessor {
     }
 
     // process context
-    return $this->_processContext($active_ctx, $ctx, $options);
+    return $this->_processContext($active_ctx, $local_ctx, $options);
   }
 
   /**
