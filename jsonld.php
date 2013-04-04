@@ -1,7 +1,7 @@
 <?php
 /**
  * PHP implementation of the JSON-LD API.
- * Version: 0.0.21
+ * Version: 0.0.22
  *
  * @author Dave Longley
  *
@@ -4973,29 +4973,6 @@ class JsonLdProcessor {
   }
 
   /**
-   * Returns a copy of this active context that can be shared between
-   * different processing algorithms. This method only copies the parts
-   * of the active context that can't be shared.
-   *
-   * @param stdClass $active_ctx the active context to use.
-   *
-   * @return stdClass a shareable copy of the active context.
-   */
-  public function _shareActiveContext($active_ctx) {
-    $rval = new stdClass();
-    $rval->{'@base'} = $active_ctx->{'@base'};
-    $rval->mappings = $active_ctx->mappings;
-    $rval->inverse = $active_ctx->inverse;
-    if(property_exists($active_ctx, '@language')) {
-      $rval->{'@language'} = $active_ctx->{'@language'};
-    }
-    if(property_exists($active_ctx, '@vocab')) {
-      $rval->{'@vocab'} = $active_ctx->{'@vocab'};
-    }
-    return $rval;
-  }
-
-  /**
    * Returns whether or not the given value is a keyword.
    *
    * @param string $v the value to check.
@@ -5417,8 +5394,7 @@ class ActiveContextCache {
     if(property_exists($this->cache, $key1)) {
       $level1 = $this->cache->{$key1};
       if(property_exists($level1, $key2)) {
-        // get shareable copy of cached active context
-        return JsonLdProcessor::_shareActiveContext($level1->{$key2});
+        return $level1->{$key2};
       }
     }
     return null;
