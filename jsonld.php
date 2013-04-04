@@ -4091,9 +4091,12 @@ class JsonLdProcessor {
     if(self::_isKeyword($iri)) {
       $relative_to['vocab'] = true;
     }
+    else if(!isset($relative_to['vocab'])) {
+      $relative_to['vocab'] = false;
+    }
 
     // use inverse context to pick a term if iri is relative to vocab
-    if(isset($relative_to['vocab']) && $relative_to['vocab'] &&
+    if($relative_to['vocab'] &&
       property_exists($this->_getInverseContext($active_ctx), $iri)) {
       $default_language = '@none';
       if(property_exists($active_ctx, '@language')) {
@@ -4204,7 +4207,22 @@ class JsonLdProcessor {
       }
     }
 
-    // no term match, check for possible CURIEs
+    // no term match, use @vocab if available
+    if($relative_to['vocab']) {
+      if(property_exists($active_ctx, '@vocab')) {
+        // determine if vocab is a prefix of the iri
+        $vocab = $active_ctx->{'@vocab'};
+        if(strpos($iri, $vocab) === 0 && $iri !== $vocab) {
+          // use suffix as relative iri if it is not a term in the active context
+          $suffix = substr($iri, strlen($vocab));
+          if(!property_exists($active_ctx->mappings, $suffix)) {
+            return $suffix;
+          }
+        }
+      }
+    }
+
+    // no term or @vocab match, check for possible CURIEs
     $choice = null;
     foreach($active_ctx->mappings as $term => $definition) {
       // skip terms with colons, they can't be prefixes
@@ -4240,22 +4258,8 @@ class JsonLdProcessor {
       return $choice;
     }
 
-    // no matching terms or curies, use @vocab if available
-    if(isset($relative_to['vocab']) && $relative_to['vocab']) {
-      if(property_exists($active_ctx, '@vocab')) {
-        // determine if vocab is a prefix of the iri
-        $vocab = $active_ctx->{'@vocab'};
-        if(strpos($iri, $vocab) === 0 && $iri !== $vocab) {
-          // use suffix as relative iri if it is not a term in the active context
-          $suffix = substr($iri, strlen($vocab));
-          if(!property_exists($active_ctx->mappings, $suffix)) {
-            return $suffix;
-          }
-        }
-      }
-    }
     // compact IRI relative to base
-    else {
+    if(!$relative_to['vocab']) {
       return jsonld_remove_base($active_ctx->{'@base'}, $iri);
     }
 
