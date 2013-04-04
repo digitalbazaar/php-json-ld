@@ -4625,19 +4625,21 @@ class JsonLdProcessor {
 
       // do not expand blank nodes (prefix of '_') or already-absolute
       // IRIs (suffix of '//')
-      if($prefix !== '_' && strpos($suffix, '//') !== 0) {
-        // prefix dependency not defined, define it
-        if($local_ctx !== null && property_exists($local_ctx, $prefix)) {
-          $this->_createTermDefinition(
-            $active_ctx, $local_ctx, $prefix, $defined);
-        }
+      if($prefix === '_' || strpos($suffix, '//') === 0) {
+        return $value;
+      }
 
-        // use mapping if prefix is defined
-        if(property_exists($active_ctx->mappings, $prefix)) {
-          $mapping = $active_ctx->mappings->{$prefix};
-          if($mapping) {
-            return $mapping->{'@id'} . $suffix;
-          }
+      // prefix dependency not defined, define it
+      if($local_ctx !== null && property_exists($local_ctx, $prefix)) {
+        $this->_createTermDefinition(
+          $active_ctx, $local_ctx, $prefix, $defined);
+      }
+
+      // use mapping if prefix is defined
+      if(property_exists($active_ctx->mappings, $prefix)) {
+        $mapping = $active_ctx->mappings->{$prefix};
+        if($mapping) {
+          return $mapping->{'@id'} . $suffix;
         }
       }
 
