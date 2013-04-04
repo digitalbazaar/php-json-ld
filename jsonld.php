@@ -1,7 +1,7 @@
 <?php
 /**
  * PHP implementation of the JSON-LD API.
- * Version: 0.0.22
+ * Version: 0.0.23
  *
  * @author Dave Longley
  *
@@ -3271,8 +3271,15 @@ class JsonLdProcessor {
         continue;
       }
 
-      // iterate over objects (ensure property is added for empty arrays)
+      // iterate over objects
       $objects = $input->{$property};
+
+      // if property is a bnode, assign it a new id
+      if(strpos($property, '_:') === 0) {
+        $property = $namer->getName($property);
+      }
+
+      // ensure property is added for empty arrays
       if(count($objects) === 0) {
         self::addValue(
           $subject, $property, array(), array('propertyIsArray' => true));
