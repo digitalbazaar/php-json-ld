@@ -1,7 +1,7 @@
 <?php
 /**
  * PHP implementation of the JSON-LD API.
- * Version: 0.0.25
+ * Version: 0.0.26
  *
  * @author Dave Longley
  *
@@ -1259,8 +1259,7 @@ class JsonLdProcessor {
    * 1. They are both primitives of the same type and value.
    * 2. They are both @values with the same @value, @type, @language,
    *   and @index, OR
-   * 3. They are both @lists with the same @list and @index, OR
-   * 4. They both have @ids that are the same.
+   * 3. They both have @ids that are the same.
    *
    * @param mixed $v1 the first value.
    * @param mixed $v2 the second value.
@@ -1282,27 +1281,7 @@ class JsonLdProcessor {
         self::_compareKeyValues($v1, $v2, '@index'));
     }
 
-    // 3. equal @lists
-    if(self::_isList($v1) && self::_isList($v2)) {
-      if(!self::_compareKeyValues($v1, $v2, '@index')) {
-        return false;
-      }
-      $list1 = $v1->{'@list'};
-      $list2 = $v2->{'@list'};
-      $count_list1 = count($list1);
-      $count_list2 = count($list2);
-      if($count_list1 !== $count_list2) {
-        return false;
-      }
-      for($i = 0; $i < $count_list1; ++$i) {
-        if(!self::compareValues($list1[$i], $list2[$i])) {
-          return false;
-        }
-      }
-      return true;
-    }
-
-    // 4. equal @ids
+    // 3. equal @ids
     if(is_object($v1) && property_exists($v1, '@id') &&
       is_object($v2) && property_exists($v2, '@id')) {
       return $v1->{'@id'} === $v2->{'@id'};
