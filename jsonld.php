@@ -1,7 +1,7 @@
 <?php
 /**
  * PHP implementation of the JSON-LD API.
- * Version: 0.0.26
+ * Version: 0.0.27
  *
  * @author Dave Longley
  *
@@ -697,26 +697,24 @@ class JsonLdProcessor {
       $ctx = $ctx[0];
     }
 
-    // add context
-    if($has_context || $options['graph']) {
-      if(is_array($compacted)) {
-        // use '@graph' keyword
-        $kwgraph = $this->_compactIri($active_ctx, '@graph');
-        $graph = $compacted;
-        $compacted = new stdClass();
-        if($has_context) {
-          $compacted->{'@context'} = $ctx;
-        }
-        $compacted->{$kwgraph} = $graph;
-      }
-      else if(is_object($compacted)) {
-        // reorder keys so @context is first
-        $graph = $compacted;
-        $compacted = new stdClass();
+    // add context and/or @graph
+    if(is_array($compacted)) {
+      // use '@graph' keyword
+      $kwgraph = $this->_compactIri($active_ctx, '@graph');
+      $graph = $compacted;
+      $compacted = new stdClass();
+      if($has_context) {
         $compacted->{'@context'} = $ctx;
-        foreach($graph as $k => $v) {
-          $compacted->{$k} = $v;
-        }
+      }
+      $compacted->{$kwgraph} = $graph;
+    }
+    else if(is_object($compacted) && $has_context) {
+      // reorder keys so @context is first
+      $graph = $compacted;
+      $compacted = new stdClass();
+      $compacted->{'@context'} = $ctx;
+      foreach($graph as $k => $v) {
+        $compacted->{$k} = $v;
       }
     }
 
