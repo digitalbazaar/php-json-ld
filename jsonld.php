@@ -612,6 +612,12 @@ class JsonLdProcessor {
    * @return mixed the compacted JSON-LD output.
    */
   public function compact($input, $ctx, $options) {
+    if($ctx === null) {
+      throw new JsonLdException(
+        'The compaction context must not be null.',
+        'jsonld.CompactError');
+    }
+
     // nothing to compact
     if($input === null) {
       return null;
