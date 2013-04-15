@@ -1,7 +1,7 @@
 <?php
 /**
  * PHP implementation of the JSON-LD API.
- * Version: 0.0.28
+ * Version: 0.0.29
  *
  * @author Dave Longley
  *
