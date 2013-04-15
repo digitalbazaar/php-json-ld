@@ -1,7 +1,7 @@
 <?php
 /**
  * PHP implementation of the JSON-LD API.
- * Version: 0.0.27
+ * Version: 0.0.28
  *
  * @author Dave Longley
  *
@@ -4458,12 +4458,15 @@ class JsonLdProcessor {
           'Invalid JSON-LD syntax; @context @id value must be a string.',
           'jsonld.SyntaxError', array('context' => $local_ctx));
       }
-      // add @id to mapping
-      $mapping->{'@id'} = $this->_expandIri(
-        $active_ctx, $id, array('vocab' => true, 'base' => true),
-        $local_ctx, $defined);
+      if($id !== $term) {
+        // add @id to mapping
+        $mapping->{'@id'} = $this->_expandIri(
+          $active_ctx, $id, array('vocab' => true, 'base' => true),
+          $local_ctx, $defined);
+      }
     }
-    else {
+
+    if(!property_exists($mapping, '@id')) {
       // see if the term has a prefix
       $colon = strpos($term, ':');
       if($colon !== false) {
