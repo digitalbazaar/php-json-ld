@@ -4395,26 +4395,9 @@ class JsonLdProcessor {
       return;
     }
 
+    // convert short-hand value to object w/@id
     if(is_string($value)) {
-      // expand value to a full IRI
-      $id = $this->_expandIri(
-        $active_ctx, $value, array('vocab' => true, 'base' => true),
-        $local_ctx, $defined);
-
-      if(self::_isKeyword($value)) {
-        // disallow aliasing @context and @preserve
-        if($value === '@context' || $value === '@preserve') {
-          throw new JsonLdException(
-            'Invalid JSON-LD syntax; @context and @preserve cannot be aliased.',
-            'jsonld.SyntaxError', array('context' => $local_ctx));
-        }
-      }
-
-      // define term to expanded IRI/keyword
-      $active_ctx->mappings->{$term} = (object)array(
-        '@id' => $id, 'reverse' => false);
-      $defined->{$term} = true;
-      return;
+      $value = (object)array('@id' => $value);
     }
 
     if(!is_object($value)) {
@@ -4556,6 +4539,15 @@ class JsonLdProcessor {
         $language = strtolower($language);
       }
       $mapping->{'@language'} = $language;
+    }
+
+
+    // disallow aliasing @context and @preserve
+    $id = $mapping->{'@id'};
+    if($id === '@context' || $id === '@preserve') {
+      throw new JsonLdException(
+        'Invalid JSON-LD syntax; @context and @preserve cannot be aliased.',
+        'jsonld.SyntaxError', array('context' => $local_ctx));
     }
 
     // define term mapping
