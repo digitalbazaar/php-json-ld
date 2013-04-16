@@ -1,7 +1,7 @@
 <?php
 /**
  * PHP implementation of the JSON-LD API.
- * Version: 0.0.29
+ * Version: 0.0.30
  *
  * @author Dave Longley
  *
@@ -4408,7 +4408,7 @@ class JsonLdProcessor {
     }
 
     // create new mapping
-    $mapping = new stdClass();
+    $mapping = $active_ctx->mappings->{$term} = new stdClass();
     $mapping->reverse = false;
 
     if(property_exists($value, '@reverse')) {
@@ -4485,6 +4485,9 @@ class JsonLdProcessor {
       }
     }
 
+    // IRI mapping now defined
+    $defined->{$term} = true;
+
     if(property_exists($value, '@type')) {
       $type = $value->{'@type'};
       if(!is_string($type)) {
@@ -4541,7 +4544,6 @@ class JsonLdProcessor {
       $mapping->{'@language'} = $language;
     }
 
-
     // disallow aliasing @context and @preserve
     $id = $mapping->{'@id'};
     if($id === '@context' || $id === '@preserve') {
@@ -4549,10 +4551,6 @@ class JsonLdProcessor {
         'Invalid JSON-LD syntax; @context and @preserve cannot be aliased.',
         'jsonld.SyntaxError', array('context' => $local_ctx));
     }
-
-    // define term mapping
-    $active_ctx->mappings->{$term} = $mapping;
-    $defined->{$term} = true;
   }
 
   /**
