@@ -1,7 +1,7 @@
 <?php
 /**
  * PHP implementation of the JSON-LD API.
- * Version: 0.0.31
+ * Version: 0.0.32
  *
  * @author Dave Longley
  *
@@ -536,8 +536,10 @@ function jsonld_remove_base($base, $iri) {
   // use '../' for each non-matching base segment
   $rval = '';
   if(count($base_segments) > 0) {
-    // do not count the last segment if it isn't a path (doesn't end in '/')
-    if(substr($base['normalizedPath'], -1) !== '/') {
+    // don't count the last segment if it isn't a path (doesn't end in '/')
+    // don't count empty first segment, it means base began with '/'
+    if(substr($base['normalizedPath'], -1) !== '/' ||
+      $base_segments[0] === '') {
       array_pop($base_segments);
     }
     foreach($base_segments as $segment) {
