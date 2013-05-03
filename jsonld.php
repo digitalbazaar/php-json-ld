@@ -1,7 +1,7 @@
 <?php
 /**
  * PHP implementation of the JSON-LD API.
- * Version: 0.0.30
+ * Version: 0.0.31
  *
  * @author Dave Longley
  *
@@ -4429,7 +4429,7 @@ class JsonLdProcessor {
 
       // expand and add @id mapping, set @type to @id
       $mapping->{'@id'} = $this->_expandIri(
-        $active_ctx, $reverse, array('vocab' => true, 'base' => true),
+        $active_ctx, $reverse, array('vocab' => true, 'base' => false),
         $local_ctx, $defined);
       $mapping->{'@type'} = '@id';
       $mapping->reverse = true;
@@ -4444,7 +4444,7 @@ class JsonLdProcessor {
       if($id !== $term) {
         // add @id to mapping
         $mapping->{'@id'} = $this->_expandIri(
-          $active_ctx, $id, array('vocab' => true, 'base' => true),
+          $active_ctx, $id, array('vocab' => true, 'base' => false),
           $local_ctx, $defined);
       }
     }
