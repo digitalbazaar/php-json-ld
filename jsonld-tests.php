@@ -15,6 +15,47 @@ ini_set('display_errors', 'stdout');
 $isCli = defined('STDIN');
 $eol = $isCli ? "\n" : '<br/>';
 
+// EARL report
+$earl = (object)array(
+  '@context' => (object)array(
+    'doap' => 'http://usefulinc.com/ns/doap#',
+    'foaf' => 'http://xmlns.com/foaf/0.1/',
+    'dc' => 'http://purl.org/dc/terms/',
+    'earl' => 'http://www.w3.org/ns/earl#',
+    'xsd' => 'http://www.w3.org/2001/XMLSchema#',
+    'doap:homepage' => (object)array('@type' => '@id'),
+    'doap:license' => (object)array('@type' => '@id'),
+    'dc:creator' => (object)array('@type' => '@id'),
+    'foaf:homepage' => (object)array('@type' => '@id'),
+    'subjectOf' => (object)array('@reverse' => 'earl:subject'),
+    'earl:assertedBy' => (object)array('@type' => '@id'),
+    'earl:mode' => (object)array('@type' => '@id'),
+    'earl:test' => (object)array('@type' => '@id'),
+    'earl:outcome' => (object)array('@type' => '@id'),
+    'dc:date' => (object)array('@type' => 'xsd:date')
+  ),
+  '@id' => 'https://github.com/digitalbazaar/php-json-ld',
+  '@type' => array('doap:Project', 'earl:TestSubject', 'earl:Software'),
+  'doap:name' => 'php-json-ld',
+  'dc:title' => 'php-json-ld',
+  'doap:homepage' => 'https://github.com/digitalbazaar/php-json-ld',
+  'doap:license' => 'https://github.com/digitalbazaar/php-json-ld/blob/master/LICENSE',
+  'doap:description' => 'A JSON-LD processor for PHP',
+  'doap:programming-language' => 'PHP',
+  'dc:creator' => 'https://github.com/dlongley',
+  'doap:developer' => (object)array(
+    '@id' => 'https://github.com/dlongley',
+    '@type' => array('foaf:Person', 'earl:Assertor'),
+    'foaf:name' => 'Dave Longley',
+    'foaf:homepage' => 'https://github.com/dlongley'
+  ),
+  'dc:date' => array(
+    '@value' => gmdate('Y-m-d'),
+    '@type' => 'xsd:date'
+  ),
+  'subjectOf' => array()
+);
+
 function error_handler($errno, $errstr, $errfile, $errline) {
   global $eol;
   echo "$eol$errstr$eol";
@@ -270,6 +311,8 @@ class TestRunner {
       echo 'Expect: ' . jsonld_encode($expect) . $eol;
       echo 'Result: ' . jsonld_encode($result) . $eol;
     }
+
+    return $pass;
   }
 
   public function load($filepath) {
@@ -310,6 +353,7 @@ class TestRunner {
           throw $e;
         }
 
+        $manifest->filename = $file;
         $manifest->filepath = $filepath;
         $manifests[] = $manifest;
       }
@@ -333,17 +377,21 @@ class TestRunner {
        }
      */
     global $eol;
+    global $earl;
     foreach($manifests as $manifest) {
       if(property_exists($manifest, 'name')) {
         $this->group($manifest->name);
       }
       $filepath = $manifest->filepath;
+      $idBase = 'http://json-ld.org/test-suite/tests/' .
+        basename($manifest->filename);
       foreach($manifest->sequence as $test) {
         // read test input files
         $type = $test->{'@type'};
         $options = array(
           'base' => 'http://json-ld.org/test-suite/tests/' . $test->input);
 
+        $pass = false;
         try {
           if(in_array('jld:ApiErrorTest', $type)) {
             echo "Skipping test \"{$test->name}\" of type: " .
@@ -403,13 +451,25 @@ class TestRunner {
           }
 
           // check results
-          $this->check($test, $test->expect, $result, $type);
+          $pass = $this->check($test, $test->expect, $result, $type);
         }
         catch(JsonLdException $e) {
           echo $eol . $e;
           $this->failed += 1;
           echo "FAIL$eol";
         }
+
+        $earl->subjectOf[] = (object)array(
+          '@type' => 'earl:Assertion',
+          'earl:assertedBy' => $earl->{'doap:developer'}->{'@id'},
+          'earl:mode' => 'earl:automatic',
+          'earl:test' => $idBase . $test->{'@id'},
+          'earl:result' => (object)array(
+            '@type' => 'earl:TestResult',
+            'dc:date' => gmdate(DateTime::ISO8601),
+            'earl:outcome' => 'earl:' . ($pass ? 'passed' : 'failed'),
+          )
+        );
       }
       if(property_exists($manifest, 'name')) {
         $this->ungroup();
@@ -419,10 +479,11 @@ class TestRunner {
 }
 
 // get command line options
-$options = getopt('d:');
+$options = getopt('d:e:');
 if($options === false || !array_key_exists('d', $options)) {
-  $var = 'path to json-ld.org/test-suite/tests';
-  echo "Usage: php jsonld-tests.php -d <$var>$eol";
+  $dvar = 'path to json-ld.org/test-suite/tests';
+  $evar = 'file to write EARL report to';
+  echo "Usage: php jsonld-tests.php -d <$dvar> [-e <$evar>]$eol";
   exit(0);
 }
 
@@ -432,5 +493,12 @@ $tr->group('JSON-LD');
 $tr->run($tr->load($options['d']));
 $tr->ungroup();
 echo "Done. Total:{$tr->total} Passed:{$tr->passed} Failed:{$tr->failed}$eol";
+
+// write out EARL report
+if(array_key_exists('e', $options)) {
+  $fd = fopen($options['e'], 'w');
+  fwrite($fd, jsonld_encode($earl));
+  fclose($fd);
+}
 
 /* end of file, omit ?> */
