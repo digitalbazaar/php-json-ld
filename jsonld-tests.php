@@ -389,7 +389,8 @@ class TestRunner {
         // read test input files
         $type = $test->{'@type'};
         $options = array(
-          'base' => 'http://json-ld.org/test-suite/tests/' . $test->input);
+          'base' => 'http://json-ld.org/test-suite/tests/' . $test->input,
+          'useNativeTypes' => true);
 
         $pass = false;
         try {
