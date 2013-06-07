@@ -1,7 +1,7 @@
 <?php
 /**
  * PHP implementation of the JSON-LD API.
- * Version: 0.0.33
+ * Version: 0.0.34
  *
  * @author Dave Longley
  *
@@ -1030,7 +1030,10 @@ class JsonLdProcessor {
     // output RDF dataset
     $namer = new UniqueNamer('_:b');
     $dataset = new stdClass();
-    foreach($node_map as $graph_name => $graph) {
+    $graph_names = array_keys((array)$node_map);
+    sort($graph_names);
+    foreach($graph_names as $graph_name) {
+      $graph = $node_map->{$graph_name};
       if(strpos($graph_name, '_:') === 0) {
         $graph_name = $namer->getName($graph_name);
       }
@@ -1509,21 +1512,34 @@ class JsonLdProcessor {
 
     $quad = '';
 
-    // subject is an IRI or bnode
+    // subject is an IRI
     if($s->type === 'IRI') {
       $quad .= "<{$s->value}>";
     }
-    // normalization mode
+    // bnode normalization mode
     else if($bnode !== null) {
       $quad .= ($s->value === $bnode) ? '_:a' : '_:z';
     }
-    // normal mode
+    // bnode normal mode
     else {
       $quad .= $s->value;
     }
+    $quad .= ' ';
 
-    // predicate is always an IRI
-    $quad .= " <{$p->value}> ";
+    // predicate is an IRI
+    if($p->type === 'IRI') {
+      $quad .= "<{$p->value}>";
+    }
+    // FIXME: TBD what to do with bnode predicates during normalization
+    // bnode normalization mode
+    else if($bnode !== null) {
+      $quad .= '_:p';
+    }
+    // bnode normal mode
+    else {
+      $quad .= $p->value;
+    }
+    $quad .= ' ';
 
     // object is IRI, bnode, or literal
     if($o->type === 'IRI') {
@@ -2591,6 +2607,8 @@ class JsonLdProcessor {
           if(!(is_object($node) && strpos($node->{'@id'}, '_:') === 0 &&
             ($node_key_count === 3 || ($node_key_count === 4 &&
               property_exists($node, 'listHeadFor'))) &&
+            property_exists($node, self::RDF_FIRST) &&
+            property_exists($node, self::RDF_REST) &&
             is_array($node->{self::RDF_FIRST}) &&
             count($node->{self::RDF_FIRST}) === 1 &&
             is_array($node->{self::RDF_REST}) &&
@@ -2704,7 +2722,7 @@ class JsonLdProcessor {
       if(property_exists($ctx, '@base')) {
         $base = $ctx->{'@base'};
         if($base === null) {
-          $base = $options['base'];
+          $base = null;
         }
         else if(!is_string($base)) {
           throw new JsonLdException(
@@ -2948,8 +2966,14 @@ class JsonLdProcessor {
 
           // RDF predicate
           $predicate = new stdClass();
-          $predicate->type = 'IRI';
-          $predicate->value = $property;
+          if(strpos($property, '_:') === 0) {
+            $predicate->type = 'blank node';
+            $predicate->value = $namer->getName($property);
+          }
+          else {
+            $predicate->type = 'IRI';
+            $predicate->value = $property;
+          }
 
           // convert @list to triples
           if(self::_isList($item)) {
@@ -3030,7 +3054,7 @@ class JsonLdProcessor {
         $object->value = ($value ? 'true' : 'false');
         $object->datatype = $datatype ? $datatype : self::XSD_BOOLEAN;
       }
-      else if(is_double($value)) {
+      else if(is_double($value) || $datatype == self::XSD_DOUBLE) {
         // canonical double representation
         $object->value = preg_replace(
           '/(\d)0*E\+?/', '$1E', sprintf('%1.15E', $value));
