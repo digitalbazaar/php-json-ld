@@ -1,7 +1,7 @@
 <?php
 /**
  * PHP implementation of the JSON-LD API.
- * Version: 0.0.35
+ * Version: 0.0.36
  *
  * @author Dave Longley
  *
@@ -134,7 +134,7 @@ function jsonld_normalize($input, $options=array()) {
  *          [useRdfType] true to use rdf:type, false to use @type
  *            (default: false).
  *          [useNativeTypes] true to convert XSD types into native types
- *            (boolean, integer, double), false not to (default: true).
+ *            (boolean, integer, double), false not to (default: false).
  *
  * @return array the JSON-LD output.
  */
@@ -319,6 +319,10 @@ function jsonld_unregister_rdf_parser($content_type) {
  * @return assoc the parsed URL.
  */
 function jsonld_parse_url($url) {
+  if($url === null) {
+    $url = '';
+  }
+
   $rval = parse_url($url);
 
   // malformed url
@@ -954,7 +958,7 @@ class JsonLdProcessor {
    *          [useRdfType] true to use rdf:type, false to use @type
    *            (default: false).
    *          [useNativeTypes] true to convert XSD types into native types
-   *            (boolean, integer, double), false not to (default: true).
+   *            (boolean, integer, double), false not to (default: false).
    *
    * @return array the JSON-LD output.
    */
@@ -963,7 +967,7 @@ class JsonLdProcessor {
 
     // set default options
     isset($options['useRdfType']) or $options['useRdfType'] = false;
-    isset($options['useNativeTypes']) or $options['useNativeTypes'] = true;
+    isset($options['useNativeTypes']) or $options['useNativeTypes'] = false;
 
     if(!isset($options['format']) && is_string($dataset)) {
       // set default format to nquads
@@ -1028,15 +1032,11 @@ class JsonLdProcessor {
     $this->_createNodeMap($expanded, $node_map, '@default', $namer);
 
     // output RDF dataset
-    $namer = new UniqueNamer('_:b');
     $dataset = new stdClass();
     $graph_names = array_keys((array)$node_map);
     sort($graph_names);
     foreach($graph_names as $graph_name) {
       $graph = $node_map->{$graph_name};
-      if(strpos($graph_name, '_:') === 0) {
-        $graph_name = $namer->getName($graph_name);
-      }
       $dataset->{$graph_name} = $this->_graphToRDF($graph, $namer);
     }
 
@@ -2675,19 +2675,6 @@ class JsonLdProcessor {
   protected function _processContext($active_ctx, $local_ctx, $options) {
     global $jsonld_cache;
 
-    $rval = null;
-
-    // get context from cache if available
-    if(property_exists($jsonld_cache, 'activeCtx')) {
-      $rval = $jsonld_cache->activeCtx->get($active_ctx, $local_ctx);
-      if($rval) {
-        return $rval;
-      }
-    }
-
-    // initialize the resulting context
-    $rval = self::_cloneActiveContext($active_ctx);
-
     // normalize local context to an array
     if(is_object($local_ctx) && property_exists($local_ctx, '@context') &&
       is_array($local_ctx->{'@context'})) {
@@ -2695,11 +2682,19 @@ class JsonLdProcessor {
     }
     $ctxs = self::arrayify($local_ctx);
 
+    // no contexts in array, clone existing context
+    if(count($ctxs) === 0) {
+      return self::_cloneActiveContext($active_ctx);
+    }
+
     // process each context in order
+    $rval = $active_ctx;
+    $must_clone = true;
     foreach($ctxs as $ctx) {
       // reset to initial context
       if($ctx === null) {
         $rval = $this->_getInitialContext($options);
+        $must_clone = false;
         continue;
       }
 
@@ -2713,6 +2708,22 @@ class JsonLdProcessor {
         throw new JsonLdException(
           'Invalid JSON-LD syntax; @context must be an object.',
           'jsonld.SyntaxError', array('context' => $ctx));
+      }
+
+      // get context from cache if available
+      if(property_exists($jsonld_cache, 'activeCtx')) {
+        $cached = $jsonld_cache->activeCtx->get($active_ctx, $ctx);
+        if($cached) {
+          $rval = $cached;
+          $must_clone = true;
+          continue;
+        }
+      }
+
+      // clone context, if required, before updating
+      if($must_clone) {
+        $rval = self::_cloneActiveContext($rval);
+        $must_clone = false;
       }
 
       // define context mappings for keys in local context
@@ -2786,11 +2797,11 @@ class JsonLdProcessor {
       foreach($ctx as $k => $v) {
         $this->_createTermDefinition($rval, $ctx, $k, $defined);
       }
-    }
 
-    // cache result
-    if(property_exists($jsonld_cache, 'activeCtx')) {
-      $jsonld_cache->activeCtx->set($active_ctx, $local_ctx, $rval);
+      // cache result
+      if(property_exists($jsonld_cache, 'activeCtx')) {
+        $jsonld_cache->activeCtx->set($active_ctx, $ctx, $rval);
+      }
     }
 
     return $rval;
@@ -2961,25 +2972,14 @@ class JsonLdProcessor {
         foreach($items as $item) {
           // RDF subject
           $subject = new stdClass();
-          if(strpos($id, '_:') === 0) {
-            $subject->type = 'blank node';
-            $subject->value = $namer->getName($id);
-          }
-          else {
-            $subject->type = 'IRI';
-            $subject->value = $id;
-          }
+          $subject->type = (strpos($id, '_:') === 0) ? 'blank node' : 'IRI';
+          $subject->value = $id;
 
           // RDF predicate
           $predicate = new stdClass();
-          if(strpos($property, '_:') === 0) {
-            $predicate->type = 'blank node';
-            $predicate->value = $namer->getName($property);
-          }
-          else {
-            $predicate->type = 'IRI';
-            $predicate->value = $property;
-          }
+          $predicate->type = (strpos($property, '_:') === 0 ?
+            'blank node' : 'IRI');
+          $predicate->value = $property;
 
           // convert @list to triples
           if(self::_isList($item)) {
@@ -2988,7 +2988,7 @@ class JsonLdProcessor {
           }
           // convert value or node object to triple
           else {
-            $object = $this->_objectToRDF($item, $namer);
+            $object = $this->_objectToRDF($item);
             $rval[] = (object)array(
               'subject' => $subject,
               'predicate' => $predicate,
@@ -3027,7 +3027,7 @@ class JsonLdProcessor {
 
       $subject = $blank_node;
       $predicate = $first;
-      $object = $this->_objectToRDF($item, $namer);
+      $object = $this->_objectToRDF($item);
       $triples[] = (object)array(
         'subject' => $subject, 'predicate' => $predicate, 'object' => $object);
 
@@ -3043,11 +3043,10 @@ class JsonLdProcessor {
    * node object to an RDF resource.
    *
    * @param mixed $item the JSON-LD value or node object.
-   * @param UniqueNamer $namer for assign blank node names.
    *
    * @return stdClass the RDF literal or RDF resource.
    */
-  protected function _objectToRDF($item, $namer) {
+  protected function _objectToRDF($item) {
     $object = new stdClass();
 
     if(self::_isValue($item)) {
@@ -3083,14 +3082,8 @@ class JsonLdProcessor {
     // convert string/node object to RDF
     else {
       $id = is_object($item) ? $item->{'@id'} : $item;
-      if(strpos($id, '_:') === 0) {
-        $object->type = 'blank node';
-        $object->value = $namer->getName($id);
-      }
-      else {
-        $object->type = 'IRI';
-        $object->value = $id;
-      }
+      $object->type = (strpos($id, '_:') === 0) ? 'blank node' : 'IRI';
+      $object->value = $id;
     }
 
     return $object;
@@ -3148,7 +3141,7 @@ class JsonLdProcessor {
           $rval->{'@type'} = $type;
         }
       }
-      else {
+      else if($type !== self::XSD_STRING) {
         $rval->{'@type'} = $type;
       }
     }
@@ -3204,6 +3197,15 @@ class JsonLdProcessor {
     }
 
     // Note: At this point, input must be a subject.
+
+    // spec requires @type to be named first, so assign names early
+    if(property_exists($input, '@type')) {
+      foreach($input->{'@type'} as $type) {
+        if(strpos($type, '_:') === 0) {
+          $namer->getName($type);
+        }
+      }
+    }
 
     // get name for subject
     if($name === null) {
