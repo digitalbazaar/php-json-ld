@@ -1,7 +1,7 @@
 <?php
 /**
  * PHP implementation of the JSON-LD API.
- * Version: 0.0.34
+ * Version: 0.0.35
  *
  * @author Dave Longley
  *
@@ -2943,8 +2943,14 @@ class JsonLdProcessor {
   protected function _graphToRDF($graph, $namer) {
     $rval = array();
 
-    foreach($graph as $id => $node) {
-      foreach($node as $property => $items) {
+    $ids = array_keys((array)$graph);
+    sort($ids);
+    foreach($ids as $id) {
+      $node = $graph->{$id};
+      $properties = array_keys((array)$node);
+      sort($properties);
+      foreach($properties as $property) {
+        $items = $node->{$property};
         if($property === '@type') {
           $property = self::RDF_TYPE;
         }
