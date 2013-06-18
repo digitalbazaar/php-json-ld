@@ -1,7 +1,7 @@
 <?php
 /**
  * PHP implementation of the JSON-LD API.
- * Version: 0.0.36
+ * Version: 0.0.37
  *
  * @author Dave Longley
  *
@@ -1737,11 +1737,13 @@ class JsonLdProcessor {
             if(property_exists($active_ctx->mappings, $compacted_property) &&
               $active_ctx->mappings->{$compacted_property} &&
               $active_ctx->mappings->{$compacted_property}->reverse) {
-              if(!property_exists($rval, $compacted_property) &&
-                !$options['compactArrays']) {
-                $rval->{$compacted_property} = array();
-              }
-              self::addValue($rval, $compacted_property, $value);
+                $container = self::getContextValue(
+                  $active_ctx, $compacted_property, '@container');
+              $use_array = ($container === '@set' ||
+                !$options['compactArrays']);
+              self::addValue(
+                $rval, $compacted_property, $value,
+                array('propertyIsArray' => $use_array));
               unset($compacted_value->{$compacted_property});
             }
           }
@@ -4435,12 +4437,10 @@ class JsonLdProcessor {
     $mapping->reverse = false;
 
     if(property_exists($value, '@reverse')) {
-      if(property_exists($value, '@id') ||
-        property_exists($value, '@type') ||
-        property_exists($value, '@language')) {
+      if(property_exists($value, '@id')) {
         throw new JsonLdException(
           'Invalid JSON-LD syntax; a @reverse term definition must not ' +
-          'contain @id, @type, or @language.',
+          'contain @id.',
           'jsonld.SyntaxError', array('context' => $local_ctx));
       }
       $reverse = $value->{'@reverse'};
@@ -4450,11 +4450,10 @@ class JsonLdProcessor {
           'jsonld.SyntaxError', array('context' => $local_ctx));
       }
 
-      // expand and add @id mapping, set @type to @id
+      // expand and add @id mapping
       $mapping->{'@id'} = $this->_expandIri(
         $active_ctx, $reverse, array('vocab' => true, 'base' => false),
         $local_ctx, $defined);
-      $mapping->{'@type'} = '@id';
       $mapping->reverse = true;
     }
     else if(property_exists($value, '@id')) {
@@ -4539,10 +4538,11 @@ class JsonLdProcessor {
           'one of the following: @list, @set, @index, or @language.',
           'jsonld.SyntaxError', array('context' => $local_ctx));
       }
-      if($mapping->reverse && $container !== '@index') {
+      if($mapping->reverse && $container !== '@index' &&
+        $container !== '@set' && $container !== null) {
         throw new JsonLdException(
           'Invalid JSON-LD syntax; @context @container value for a @reverse ' +
-          'type definition must be @index.',
+          'type definition must be @index or @set.',
           'jsonld.SyntaxError', array('context' => $local_ctx));
       }
 
