@@ -1638,7 +1638,9 @@ class JsonLdProcessor {
         $o->value);
       $quad .= '"' . $escaped . '"';
       if($o->datatype === self::RDF_LANGSTRING) {
-        $quad .= "@{$o->language}";
+        if($o->language) {
+          $quad .= "@{$o->language}";
+        }
       }
       else if($o->datatype !== self::XSD_STRING) {
         $quad .= "^^<{$o->datatype}>";
