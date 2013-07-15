@@ -1,7 +1,7 @@
 <?php
 /**
  * PHP implementation of the JSON-LD API.
- * Version: 0.0.37
+ * Version: 0.0.38
  *
  * @author Dave Longley
  *
@@ -43,9 +43,8 @@
  * @param mixed $ctx the context to compact with.
  * @param assoc [$options] options to use:
  *          [base] the base IRI to use.
- *          [strict] use strict mode (default: true).
  *          [graph] true to always output a top-level graph (default: false).
- *          [loadContext(url)] the context loader.
+ *          [loadDocument(url)] the document loader.
  *
  * @return mixed the compacted JSON-LD output.
  */
@@ -60,7 +59,7 @@ function jsonld_compact($input, $ctx, $options=array()) {
  * @param mixed $input the JSON-LD object to expand.
  * @param assoc[$options] the options to use:
  *          [base] the base IRI to use.
- *          [loadContext(url)] the context loader.
+ *          [loadDocument(url)] the document loader.
  *
  * @return array the expanded JSON-LD output.
  */
@@ -77,7 +76,7 @@ function jsonld_expand($input, $options=array()) {
  *          null.
  * @param [options] the options to use:
  *          [base] the base IRI to use.
- *          [loadContext(url)] the context loader.
+ *          [loadDocument(url)] the document loader.
  *
  * @return mixed the flattened JSON-LD output.
  */
@@ -96,7 +95,7 @@ function jsonld_flatten($input, $ctx, $options=array()) {
  *          [embed] default @embed flag (default: true).
  *          [explicit] default @explicit flag (default: false).
  *          [omitDefault] default @omitDefault flag (default: false).
- *          [loadContext(url)] the context loader.
+ *          [loadDocument(url)] the document loader.
  *
  * @return stdClass the framed JSON-LD output.
  */
@@ -114,7 +113,7 @@ function jsonld_frame($input, $frame, $options=array()) {
  *          [base] the base IRI to use.
  *          [format] the format if output is a string:
  *            'application/nquads' for N-Quads (default).
- *          [loadContext(url)] the context loader.
+ *          [loadDocument(url)] the document loader.
  *
  * @return mixed the normalized output.
  */
@@ -151,7 +150,7 @@ function jsonld_from_rdf($input, $options=array()) {
  *          [base] the base IRI to use.
  *          [format] the format to use to output a string:
  *            'application/nquads' for N-Quads (default).
- *          [loadContext(url)] the context loader.
+ *          [loadDocument(url)] the document loader.
  *
  * @return mixed the resulting RDF dataset (or a serialization of it).
  */
@@ -177,18 +176,18 @@ $jsonld_cache = new stdClass();
 /** The default active context cache. */
 $jsonld_cache->activeCtx = new ActiveContextCache();
 
-/** The default JSON-LD context loader. */
-global $jsonld_default_load_context;
-$jsonld_default_load_context = null;
+/** Stores the default JSON-LD document loader. */
+global $jsonld_default_load_document;
+$jsonld_default_load_document = null;
 
 /**
- * Sets the default JSON-LD context loader.
+ * Sets the default JSON-LD document loader.
  *
- * @param callable load_context(url) the context loader.
+ * @param callable load_document(url) the document loader.
  */
-function jsonld_set_context_loader($load_context) {
-  global $jsonld_default_load_context;
-  $jsonld_default_load_context = $load_context;
+function jsonld_set_document_loader($load_document) {
+  global $jsonld_default_load_document;
+  $jsonld_default_load_document = $load_document;
 }
 
 /**
@@ -199,13 +198,19 @@ function jsonld_set_context_loader($load_context) {
  * @return the JSON-LD.
  */
 function jsonld_get_url($url) {
-  global $jsonld_default_load_context;
-  if($jsonld_default_load_context !== null) {
-    return call_user_func($jsonld_default_load_context, $url);
+  global $jsonld_default_load_document;
+  if($jsonld_default_load_document !== null) {
+    $document_loader = $jsonld_default_load_document;
+  }
+  else {
+    $document_loader = $jsonld_default_document_loader;
   }
 
-  // default JSON-LD GET implementation
-  return jsonld_default_get_url($url);
+  $remote_doc = $document_loader($url);
+  if($remote_doc) {
+    return $remote_doc->document;
+  }
+  return null;
 }
 
 /**
@@ -213,28 +218,45 @@ function jsonld_get_url($url) {
  *
  * @param string $url the URL to to retrieve.
  *
- * @return the JSON-LD.
+ * @return stdClass the RemoteDocument object.
  */
-function jsonld_default_get_url($url) {
-  // default JSON-LD GET implementation
+function jsonld_default_document_loader($url) {
+  $redirects = array();
+
   $opts = array(
     'http' => array(
-      'method' => "GET",
+      'method' => 'GET',
       'header' =>
         "Accept: application/ld+json\r\n" .
-        "User-Agent: PaySwarm PHP Client/1.0\r\n"),
+        "User-Agent: JSON-LD PHP Client/1.0\r\n"),
     'https' => array(
       'verify_peer' => true,
-      'method' => "GET",
+      'method' => 'GET',
       'header' =>
         "Accept: application/ld+json\r\n" .
-        "User-Agent: PaySwarm PHP Client/1.0\r\n"));
+        "User-Agent: JSON-LD PHP Client/1.0\r\n"));
   $stream = stream_context_create($opts);
+  stream_context_set_params($stream, array('notification' =>
+    function($notification_code, $severity, $message) use (&$redirects) {
+      switch($notification_code) {
+      case STREAM_NOTIFY_REDIRECTED:
+        $redirects[] = $message;
+        break;
+      };
+    }));
   $result = @file_get_contents($url, false, $stream);
   if($result === false) {
     throw new Exception("Could not GET url: '$url'");
   }
-  return $result;
+  $redirs = count($redirects);
+  if($redirs > 0) {
+    $url = $redirects[$redirs - 1];
+  }
+  // return RemoteDocument
+  return (object)array(
+    'contextUrl' => null,
+    'document' => $result,
+    'documentUrl' => $url);
 }
 
 /**
@@ -242,9 +264,9 @@ function jsonld_default_get_url($url) {
  *
  * @param string $url the secure URL to to retrieve.
  *
- * @return the JSON-LD.
+ * @return stdClass the RemoteDocument object.
  */
-function jsonld_default_get_secure_url($url) {
+function jsonld_default_secure_document_loader($url) {
   if(strpos($url, 'https') !== 0) {
     throw new Exception("Could not GET url: '$url'; 'https' is required.");
   }
@@ -258,7 +280,7 @@ function jsonld_default_get_secure_url($url) {
       'method' => "GET",
       'header' =>
         "Accept: application/ld+json\r\n" .
-        "User-Agent: PaySwarm PHP Client/1.0\r\n"));
+        "User-Agent: JSON-LD PHP Client/1.0\r\n"));
   $stream = stream_context_create($opts);
   stream_context_set_params($stream, array('notification' =>
     function($notification_code, $severity, $message) use (&$redirects) {
@@ -277,8 +299,13 @@ function jsonld_default_get_secure_url($url) {
       throw new Exception(
         "Could not GET redirected url: '$redirect'; 'https' is required.");
     }
+    $url = $redirect;
   }
-  return $result;
+  // return RemoteDocument
+  return (object)array(
+    'contextUrl' => null,
+    'document' => $result,
+    'documentUrl' => $url);
 }
 
 /** Registered global RDF dataset parsers hashed by content-type. */
@@ -292,7 +319,7 @@ $jsonld_rdf_parsers = new stdClass();
  *
  * @param string $content_type the content-type for the parser.
  * @param callable $parser(input) the parser function (takes a string as
- *           a parameter and returns an RDF dataset).
+ *          a parameter and returns an RDF dataset).
  */
 function jsonld_register_rdf_parser($content_type, $parser) {
   global $jsonld_rdf_parsers;
@@ -606,14 +633,13 @@ class JsonLdProcessor {
    * @param mixed $ctx the context to compact with.
    * @param assoc $options the compaction options.
    *          [base] the base IRI to use.
-   *          [strict] use strict mode (default: true).
    *          [compactArrays] true to compact arrays to single values when
    *            appropriate, false not to (default: true).
    *          [graph] true to always output a top-level graph (default: false).
    *          [skipExpansion] true to assume the input is expanded and skip
    *            expansion, false not to, defaults to false.
    *          [activeCtx] true to also return the active context used.
-   *          [loadContext(url)] the context loader.
+   *          [loadDocument(url)] the document loader.
    *
    * @return mixed the compacted JSON-LD output.
    */
@@ -629,15 +655,13 @@ class JsonLdProcessor {
       return null;
     }
 
-    // set default options
-    isset($options['base']) or $options['base'] = '';
-    isset($options['strict']) or $options['strict'] = true;
-    isset($options['compactArrays']) or $options['compactArrays'] = true;
-    isset($options['graph']) or $options['graph'] = false;
-    isset($options['skipExpansion']) or $options['skipExpansion'] = false;
-    isset($options['activeCtx']) or $options['activeCtx'] = false;
-    isset($options['loadContext']) or $options['loadContext'] =
-      'jsonld_get_url';
+    self::setdefaults($options, array(
+      'base' => is_string($input) ? $input : '',
+      'compactArrays' => true,
+      'graph' => false,
+      'skipExpansion' => false,
+      'activeCtx' => false,
+      'loadDocument' => 'jsonld_default_document_loader'));
 
     if($options['skipExpansion'] === true) {
       $expanded = $input;
@@ -743,25 +767,40 @@ class JsonLdProcessor {
    * @param mixed $input the JSON-LD object to expand.
    * @param assoc $options the options to use:
    *          [base] the base IRI to use.
+   *          [expandContext] a context to expand with.
    *          [keepFreeFloatingNodes] true to keep free-floating nodes,
    *            false not to, defaults to false.
-   *          [loadContext(url)] the context loader.
+   *          [loadDocument(url)] the document loader.
    *
    * @return array the expanded JSON-LD output.
    */
   public function expand($input, $options) {
-    // set default options
-    isset($options['base']) or $options['base'] = '';
-    isset($options['keepFreeFloatingNodes']) or
-      $options['keepFreeFloatingNodes'] = false;
-    isset($options['loadContext']) or $options['loadContext'] =
-      'jsonld_get_url';
+    self::setdefaults($options, array(
+      'base' => is_string($input) ? $input : '',
+      'keepFreeFloatingNodes' => false,
+      'loadDocument' => 'jsonld_default_document_loader'));
+
+    // if input is a string, attempt to dereference remote document
+    if(is_string($input)) {
+      $remote_doc = $options['loadDocument']($input);
+    }
+    else {
+      $remote_doc = (object)array(
+        'contextUrl' => null,
+        'documentUrl' => null,
+        'document' => $input);
+    }
+
+    // build meta-object and retrieve all @context urls
+    $input = (object)array(
+      'document' => self::copy($input),
+      'remoteContext' => (object)array(
+        '@context' => $remote_doc->contextUrl));
 
     // retrieve all @context URLs in the input
-    $input = self::copy($input);
     try {
       $this->_retrieveContextUrls(
-        $input, new stdClass(), $options['loadContext'], $options['base']);
+        $input, new stdClass(), $options['loadDocument'], $options['base']);
     }
     catch(Exception $e) {
       throw new JsonLdException(
@@ -769,9 +808,22 @@ class JsonLdProcessor {
         'jsonld.ExpandError', null, $e);
     }
 
-    // do expansion
     $active_ctx = $this->_getInitialContext($options);
-    $expanded = $this->_expand($active_ctx, null, $input, $options, false);
+    $document = $input->document;
+    $remote_context = $input->remoteContext->{'@context'};
+
+    // process optional expandContext
+    if(isset($options['expandContext'])) {
+      self::_processContext($active_ctx, $options->expandContext, $options);
+    }
+
+    // process remote context from HTTP Link Header
+    if($remote_context) {
+      self::_processContext($active_ctx, $remote_context, $options);
+    }
+
+    // do expansion
+    $expanded = $this->_expand($active_ctx, null, $document, $options, false);
 
     // optimize away @graph with no other properties
     if(is_object($expanded) && property_exists($expanded, '@graph') &&
@@ -792,15 +844,15 @@ class JsonLdProcessor {
    * @param ctx the context to use to compact the flattened output, or null.
    * @param assoc $options the options to use:
    *          [base] the base IRI to use.
-   *          [loadContext(url)] the context loader.
+   *          [expandContext] a context to expand with.
+   *          [loadDocument(url)] the document loader.
    *
    * @return array the flattened output.
    */
   public function flatten($input, $ctx, $options) {
-    // set default options
-    isset($options['base']) or $options['base'] = '';
-    isset($options['loadContext']) or $options['loadContext'] =
-      'jsonld_get_url';
+    self::setdefaults($options, array(
+      'base' => is_string($input) ? $input : '',
+      'loadDocument' => 'jsonld_default_document_loader'));
 
     try {
       // expand input
@@ -841,26 +893,50 @@ class JsonLdProcessor {
    * @param stdClass $frame the JSON-LD frame to use.
    * @param $options the framing options.
    *          [base] the base IRI to use.
+   *          [expandContext] a context to expand with.
    *          [embed] default @embed flag (default: true).
    *          [explicit] default @explicit flag (default: false).
    *          [omitDefault] default @omitDefault flag (default: false).
-   *          [loadContext(url)] the context loader.
+   *          [loadDocument(url)] the document loader.
    *
    * @return stdClass the framed JSON-LD output.
    */
   public function frame($input, $frame, $options) {
-    // set default options
-    isset($options['base']) or $options['base'] = '';
-    isset($options['compactArrays']) or $options['compactArrays'] = true;
-    isset($options['embed']) or $options['embed'] = true;
-    isset($options['explicit']) or $options['explicit'] = false;
-    isset($options['omitDefault']) or $options['omitDefault'] = false;
-    isset($options['loadContext']) or $options['loadContext'] =
-      'jsonld_get_url';
+    self::setdefaults($options, array(
+      'base' => is_string($input) ? $input : '',
+      'compactArrays' => true,
+      'embed' => true,
+      'explicit' => false,
+      'omitDefault' => false,
+      'loadDocument' => 'jsonld_default_document_loader'));
+
+    // if frame is a string, attempt to dereference remote document
+    if(is_string($frame)) {
+      $remote_frame = $options['loadDocument']($frame);
+    }
+    else {
+      $remote_frame = (object)array(
+        'contextUrl' => null,
+        'documentUrl' => null,
+        'document' => $frame);
+    }
 
     // preserve frame context
-    $ctx = (property_exists($frame, '@context') ?
-      $frame->{'@context'} : new stdClass());
+    $frame = $remote_frame->document;
+    if($frame !== null) {
+      $ctx = (property_exists($frame, '@context') ?
+        $frame->{'@context'} : new stdClass());
+      if($remote_frame->contextUrl !== null) {
+        if($ctx !== null) {
+          $ctx = $remote_frame->contextUrl;
+        }
+        else {
+          $ctx = self::arrayify($ctx);
+          $ctx[] = $remote_frame->contextUrl;
+        }
+        $frame->{'@context'} = $ctx;
+      }
+    }
 
     try {
       // expand input
@@ -917,17 +993,17 @@ class JsonLdProcessor {
    * @param mixed $input the JSON-LD object to normalize.
    * @param assoc $options the options to use:
    *          [base] the base IRI to use.
+   *          [expandContext] a context to expand with.
    *          [format] the format if output is a string:
    *            'application/nquads' for N-Quads.
-   *          [loadContext(url)] the context loader.
+   *          [loadDocument(url)] the document loader.
    *
    * @return mixed the normalized output.
    */
   public function normalize($input, $options) {
-    // set default options
-    isset($options['base']) or $options['base'] = '';
-    isset($options['loadContext']) or $options['loadContext'] =
-      'jsonld_get_url';
+    self::setdefaults($options, array(
+      'base' => is_string($input) ? $input : '',
+      'loadDocument' => 'jsonld_default_document_loader'));
 
     try {
       // convert to RDF dataset then do normalization
@@ -965,9 +1041,9 @@ class JsonLdProcessor {
   public function fromRDF($dataset, $options) {
     global $jsonld_rdf_parsers;
 
-    // set default options
-    isset($options['useRdfType']) or $options['useRdfType'] = false;
-    isset($options['useNativeTypes']) or $options['useNativeTypes'] = false;
+    self::setdefaults($options, array(
+      'useRdfType' => false,
+      'useNativeTypes' => false));
 
     if(!isset($options['format']) && is_string($dataset)) {
       // set default format to nquads
@@ -991,7 +1067,7 @@ class JsonLdProcessor {
       else {
         $callable = $jsonld_rdf_parsers->{$options['format']};
       }
-      $dataset = call_user_func($callable, $dataset);
+      $dataset = $callable($dataset);
     }
 
     // convert from RDF
@@ -1004,17 +1080,17 @@ class JsonLdProcessor {
    * @param mixed $input the JSON-LD object.
    * @param assoc $options the options to use:
    *          [base] the base IRI to use.
+   *          [expandContext] a context to expand with.
    *          [format] the format to use to output a string:
    *            'application/nquads' for N-Quads (default).
-   *          [loadContext(url)] the context loader.
+   *          [loadDocument(url)] the document loader.
    *
    * @return mixed the resulting RDF dataset (or a serialization of it).
    */
   public function toRDF($input, $options) {
-    // set default options
-    isset($options['base']) or $options['base'] = '';
-    isset($options['loadContext']) or $options['loadContext'] =
-      'jsonld_get_url';
+    self::setdefaults($options, array(
+      'base' => is_string($input) ? $input : '',
+      'loadDocument' => 'jsonld_default_document_loader'));
 
     try {
       // expand input
@@ -1065,15 +1141,13 @@ class JsonLdProcessor {
    * @param stdClass $active_ctx the current active context.
    * @param mixed $local_ctx the local context to process.
    * @param assoc $options the options to use:
-   *          [loadContext(url)] the context loader.
+   *          [loadDocument(url)] the document loader.
    *
    * @return stdClass the new active context.
    */
   public function processContext($active_ctx, $local_ctx, $options) {
-    // set default options
-    isset($options['base']) or $options['base'] = '';
-    isset($options['loadContext']) or $options['loadContext'] =
-      'jsonld_get_url';
+    self::setdefaults($options, array(
+      'loadDocument' => 'jsonld_default_document_loader'));
 
     // return initial context early for null context
     if($local_ctx === null) {
@@ -1088,7 +1162,7 @@ class JsonLdProcessor {
     }
     try {
       $this->_retrieveContextUrls(
-        $local_ctx, new stdClass(), $options['loadContext'], $options['base']);
+        $local_ctx, new stdClass(), $options['loadDocument'], $options['base']);
     }
     catch(Exception $e) {
       throw new JsonLdException(
@@ -1170,8 +1244,9 @@ class JsonLdProcessor {
    */
   public static function addValue(
     $subject, $property, $value, $options=array()) {
-    isset($options['allowDuplicate']) or $options['allowDuplicate'] = true;
-    isset($options['propertyIsArray']) or $options['propertyIsArray'] = false;
+    self::setdefaults($options, array(
+      'allowDuplicate' => true,
+      'propertyIsArray' => false));
 
     if(is_array($value)) {
       if(count($value) === 0 && $options['propertyIsArray'] &&
@@ -1241,7 +1316,8 @@ class JsonLdProcessor {
    */
   public static function removeValue(
     $subject, $property, $value, $options=array()) {
-    isset($options['propertyIsArray']) or $options['propertyIsArray'] = false;
+    self::setdefaults($options, array(
+      'propertyIsArray' => false));
 
     // filter out value
     $filter = function($e) use ($value) {
@@ -1643,6 +1719,30 @@ class JsonLdProcessor {
     }
     else {
       return $value;
+    }
+  }
+
+  /**
+   * Sets the value of a key for the given array if that property
+   * has not already been set.
+   *
+   * @param &assoc $arr the object to update.
+   * @param string $key the key to update.
+   * @param mixed $value the value to set.
+   */
+  public static function setdefault(&$arr, $key, $value) {
+    isset($arr[$key]) or $arr[$key] = $value;
+  }
+
+  /**
+   * Sets default values for keys in the given array.
+   *
+   * @param &assoc $arr the object to update.
+   * @param assoc $defaults the default keys and values.
+   */
+  public static function setdefaults(&$arr, $defaults) {
+    foreach($defaults as $key => $value) {
+      self::setdefault($arr, $key, $value);
     }
   }
 
@@ -4221,7 +4321,8 @@ class JsonLdProcessor {
         // determine if vocab is a prefix of the iri
         $vocab = $active_ctx->{'@vocab'};
         if(strpos($iri, $vocab) === 0 && $iri !== $vocab) {
-          // use suffix as relative iri if it is not a term in the active context
+          // use suffix as relative iri if it is not a term in the active
+          // context
           $suffix = substr($iri, strlen($vocab));
           if(!property_exists($active_ctx->mappings, $suffix)) {
             return $suffix;
@@ -4741,19 +4842,19 @@ class JsonLdProcessor {
   }
 
   /**
-   * Retrieves external @context URLs using the given context loader. Each
+   * Retrieves external @context URLs using the given document loader. Each
    * instance of @context in the input that refers to a URL will be replaced
    * with the JSON @context found at that URL.
    *
    * @param mixed $input the JSON-LD input with possible contexts.
    * @param stdClass $cycles an object for tracking context cycles.
-   * @param callable $load_context(url) the context loader.
+   * @param callable $load_document(url) the document loader.
    * @param base $base the base URL to resolve relative URLs against.
    *
    * @return mixed the result.
    */
   protected function _retrieveContextUrls(
-    &$input, $cycles, $load_context, $base='') {
+    &$input, $cycles, $load_document, $base='') {
     if(count(get_object_vars($cycles)) > self::MAX_CONTEXT_URLS) {
       throw new JsonLdException(
         'Maximum number of @context URLs exceeded.',
@@ -4786,7 +4887,8 @@ class JsonLdProcessor {
       $_cycles->{$url} = true;
 
       // retrieve URL
-      $ctx = $load_context($url);
+      $remote_doc = $load_document($url);
+      $ctx = $remote_doc->document;
 
       // parse string context as JSON
       if(is_string($ctx)) {
@@ -4829,9 +4931,18 @@ class JsonLdProcessor {
       if(!property_exists($ctx, '@context')) {
         $ctx = (object)array('@context' => new stdClass());
       }
+      else {
+        $ctx = (object)array('@context' => $ctx->{'@context'});
+      }
+
+      // append context URL to context if given
+      if($remote_doc->contextUrl !== null) {
+        $ctx->{'@context'} = self::arrayify($ctx->{'@context'});
+        $ctx->{'@context'}[] = $remote_doc->contextUrl;
+      }
 
       // recurse
-      $this->_retrieveContextUrls($ctx, $_cycles, $load_context, $url);
+      $this->_retrieveContextUrls($ctx, $_cycles, $load_document, $url);
       $urls->{$url} = $ctx->{'@context'};
     }
 
@@ -5202,7 +5313,7 @@ class JsonLdProcessor {
 
 // register the N-Quads RDF parser
 jsonld_register_rdf_parser(
-  'application/nquads', 'JsonLdProcessor::parseNQuads');
+  'application/nquads', array('JsonLdProcessor', 'parseNQuads'));
 
 /**
  * A JSON-LD Exception.

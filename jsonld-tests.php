@@ -464,7 +464,8 @@ class TestRunner {
           '@type' => 'earl:Assertion',
           'earl:assertedBy' => $earl->{'doap:developer'}->{'@id'},
           'earl:mode' => 'earl:automatic',
-          'earl:test' => $idBase . $test->{'@id'},
+          'earl:test' => $idBase . (property_exists($test, '@id') ?
+            $test->{'@id'} : ''),
           'earl:result' => (object)array(
             '@type' => 'earl:TestResult',
             'dc:date' => gmdate(DateTime::ISO8601),
