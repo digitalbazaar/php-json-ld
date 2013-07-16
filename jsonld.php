@@ -796,6 +796,16 @@ class JsonLdProcessor {
       'document' => self::copy($input),
       'remoteContext' => (object)array(
         '@context' => $remote_doc->contextUrl));
+    if(isset($options['expandContext'])) {
+      $expand_context = self::copy($options['expandContext']);
+      if(is_object($expand_context) &&
+        property_exists($expand_context, '@context')) {
+        $input->expandContext = $expand_context;
+      }
+      else {
+        $input->expandContext = (object)array('@context' => $expand_context);
+      }
+    }
 
     // retrieve all @context URLs in the input
     try {
@@ -813,13 +823,15 @@ class JsonLdProcessor {
     $remote_context = $input->remoteContext->{'@context'};
 
     // process optional expandContext
-    if(isset($options['expandContext'])) {
-      self::_processContext($active_ctx, $options->expandContext, $options);
+    if(property_exists($input, 'expandContext')) {
+      $active_ctx = self::_processContext(
+        $active_ctx, $input->expandContext, $options);
     }
 
     // process remote context from HTTP Link Header
     if($remote_context) {
-      self::_processContext($active_ctx, $remote_context, $options);
+      $active_ctx = self::_processContext(
+        $active_ctx, $remote_context, $options);
     }
 
     // do expansion
