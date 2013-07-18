@@ -112,7 +112,7 @@ function jsonld_frame($input, $frame, $options=array()) {
  * @param assoc [$options] the options to use:
  *          [base] the base IRI to use.
  *          [format] the format if output is a string:
- *            'application/nquads' for N-Quads (default).
+ *            'application/nquads' for N-Quads.
  *          [loadDocument(url)] the document loader.
  *
  * @return mixed the normalized output.
@@ -149,7 +149,7 @@ function jsonld_from_rdf($input, $options=array()) {
  * @param assoc [$options] the options to use:
  *          [base] the base IRI to use.
  *          [format] the format to use to output a string:
- *            'application/nquads' for N-Quads (default).
+ *            'application/nquads' for N-Quads.
  *          [loadDocument(url)] the document loader.
  *
  * @return mixed the resulting RDF dataset (or a serialization of it).
@@ -1094,7 +1094,7 @@ class JsonLdProcessor {
    *          [base] the base IRI to use.
    *          [expandContext] a context to expand with.
    *          [format] the format to use to output a string:
-   *            'application/nquads' for N-Quads (default).
+   *            'application/nquads' for N-Quads.
    *          [loadDocument(url)] the document loader.
    *
    * @return mixed the resulting RDF dataset (or a serialization of it).
