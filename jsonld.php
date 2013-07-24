@@ -1,7 +1,7 @@
 <?php
 /**
  * PHP implementation of the JSON-LD API.
- * Version: 0.0.38
+ * Version: 0.0.39
  *
  * @author Dave Longley
  *
@@ -661,7 +661,7 @@ class JsonLdProcessor {
       'graph' => false,
       'skipExpansion' => false,
       'activeCtx' => false,
-      'loadDocument' => 'jsonld_default_document_loader'));
+      'documentLoader' => 'jsonld_default_document_loader'));
 
     if($options['skipExpansion'] === true) {
       $expanded = $input;
@@ -778,11 +778,11 @@ class JsonLdProcessor {
     self::setdefaults($options, array(
       'base' => is_string($input) ? $input : '',
       'keepFreeFloatingNodes' => false,
-      'loadDocument' => 'jsonld_default_document_loader'));
+      'documentLoader' => 'jsonld_default_document_loader'));
 
     // if input is a string, attempt to dereference remote document
     if(is_string($input)) {
-      $remote_doc = $options['loadDocument']($input);
+      $remote_doc = $options['documentLoader']($input);
     }
     else {
       $remote_doc = (object)array(
@@ -810,7 +810,7 @@ class JsonLdProcessor {
     // retrieve all @context URLs in the input
     try {
       $this->_retrieveContextUrls(
-        $input, new stdClass(), $options['loadDocument'], $options['base']);
+        $input, new stdClass(), $options['documentLoader'], $options['base']);
     }
     catch(Exception $e) {
       throw new JsonLdException(
@@ -864,7 +864,7 @@ class JsonLdProcessor {
   public function flatten($input, $ctx, $options) {
     self::setdefaults($options, array(
       'base' => is_string($input) ? $input : '',
-      'loadDocument' => 'jsonld_default_document_loader'));
+      'documentLoader' => 'jsonld_default_document_loader'));
 
     try {
       // expand input
@@ -920,11 +920,11 @@ class JsonLdProcessor {
       'embed' => true,
       'explicit' => false,
       'omitDefault' => false,
-      'loadDocument' => 'jsonld_default_document_loader'));
+      'documentLoader' => 'jsonld_default_document_loader'));
 
     // if frame is a string, attempt to dereference remote document
     if(is_string($frame)) {
-      $remote_frame = $options['loadDocument']($frame);
+      $remote_frame = $options['documentLoader']($frame);
     }
     else {
       $remote_frame = (object)array(
@@ -1015,7 +1015,7 @@ class JsonLdProcessor {
   public function normalize($input, $options) {
     self::setdefaults($options, array(
       'base' => is_string($input) ? $input : '',
-      'loadDocument' => 'jsonld_default_document_loader'));
+      'documentLoader' => 'jsonld_default_document_loader'));
 
     try {
       // convert to RDF dataset then do normalization
@@ -1102,7 +1102,7 @@ class JsonLdProcessor {
   public function toRDF($input, $options) {
     self::setdefaults($options, array(
       'base' => is_string($input) ? $input : '',
-      'loadDocument' => 'jsonld_default_document_loader'));
+      'documentLoader' => 'jsonld_default_document_loader'));
 
     try {
       // expand input
@@ -1159,7 +1159,7 @@ class JsonLdProcessor {
    */
   public function processContext($active_ctx, $local_ctx, $options) {
     self::setdefaults($options, array(
-      'loadDocument' => 'jsonld_default_document_loader'));
+      'documentLoader' => 'jsonld_default_document_loader'));
 
     // return initial context early for null context
     if($local_ctx === null) {
@@ -1174,7 +1174,8 @@ class JsonLdProcessor {
     }
     try {
       $this->_retrieveContextUrls(
-        $local_ctx, new stdClass(), $options['loadDocument'], $options['base']);
+        $local_ctx, new stdClass(),
+        $options['documentLoader'], $options['base']);
     }
     catch(Exception $e) {
       throw new JsonLdException(
