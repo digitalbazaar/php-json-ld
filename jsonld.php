@@ -2770,11 +2770,17 @@ class JsonLdProcessor {
         foreach($subjects_ as $subject_) {
           $node_ = $graph_object->{$subject_};
           unset($node_->listHeadFor);
-          $node->{'@graph'}[] = $node_;
+          // only add full subjects to top-level
+          if(!self::_isSubjectReference($node_)) {
+            $node->{'@graph'}[] = $node_;
+          }
         }
       }
       unset($node->listHeadFor);
-      $result[] = $node;
+      // only add full subjects to top-level
+      if(!self::_isSubjectReference($node)) {
+        $result[] = $node;
+      }
     }
 
     return $result;
