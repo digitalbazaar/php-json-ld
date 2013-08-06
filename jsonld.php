@@ -1025,6 +1025,7 @@ class JsonLdProcessor {
       if(isset($opts['format'])) {
         unset($opts['format']);
       }
+      $opts['produceGeneralizedRdf'] = false;
       $dataset = $this->toRDF($input, $opts);
     }
     catch(Exception $e) {
