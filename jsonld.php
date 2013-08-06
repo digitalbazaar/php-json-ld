@@ -3078,10 +3078,11 @@ class JsonLdProcessor {
    *
    * @param stdClass $graph the graph to create RDF triples for.
    * @param UniqueNamer $namer for assigning bnode names.
+   * @param assoc $options the RDF serialization options.
    *
    * @return array the array of RDF triples for the given graph.
    */
-  protected function _graphToRDF($graph, $namer) {
+  protected function _graphToRDF($graph, $namer, $options) {
     $rval = array();
 
     $ids = array_keys((array)$graph);
