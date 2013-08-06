@@ -1,7 +1,7 @@
 <?php
 /**
  * PHP implementation of the JSON-LD API.
- * Version: 0.0.39
+ * Version: 0.1.0
  *
  * @author Dave Longley
  *
@@ -44,7 +44,7 @@
  * @param assoc [$options] options to use:
  *          [base] the base IRI to use.
  *          [graph] true to always output a top-level graph (default: false).
- *          [loadDocument(url)] the document loader.
+ *          [documentLoader(url)] the document loader.
  *
  * @return mixed the compacted JSON-LD output.
  */
@@ -59,7 +59,7 @@ function jsonld_compact($input, $ctx, $options=array()) {
  * @param mixed $input the JSON-LD object to expand.
  * @param assoc[$options] the options to use:
  *          [base] the base IRI to use.
- *          [loadDocument(url)] the document loader.
+ *          [documentLoader(url)] the document loader.
  *
  * @return array the expanded JSON-LD output.
  */
@@ -76,7 +76,7 @@ function jsonld_expand($input, $options=array()) {
  *          null.
  * @param [options] the options to use:
  *          [base] the base IRI to use.
- *          [loadDocument(url)] the document loader.
+ *          [documentLoader(url)] the document loader.
  *
  * @return mixed the flattened JSON-LD output.
  */
@@ -95,7 +95,7 @@ function jsonld_flatten($input, $ctx, $options=array()) {
  *          [embed] default @embed flag (default: true).
  *          [explicit] default @explicit flag (default: false).
  *          [omitDefault] default @omitDefault flag (default: false).
- *          [loadDocument(url)] the document loader.
+ *          [documentLoader(url)] the document loader.
  *
  * @return stdClass the framed JSON-LD output.
  */
@@ -113,7 +113,7 @@ function jsonld_frame($input, $frame, $options=array()) {
  *          [base] the base IRI to use.
  *          [format] the format if output is a string:
  *            'application/nquads' for N-Quads.
- *          [loadDocument(url)] the document loader.
+ *          [documentLoader(url)] the document loader.
  *
  * @return mixed the normalized output.
  */
@@ -150,7 +150,9 @@ function jsonld_from_rdf($input, $options=array()) {
  *          [base] the base IRI to use.
  *          [format] the format to use to output a string:
  *            'application/nquads' for N-Quads.
- *          [loadDocument(url)] the document loader.
+ *          [produceGeneralizedRdf] true to output generalized RDF, false
+ *            to produce only standard RDF (default: false).
+ *          [documentLoader(url)] the document loader.
  *
  * @return mixed the resulting RDF dataset (or a serialization of it).
  */
@@ -639,7 +641,7 @@ class JsonLdProcessor {
    *          [skipExpansion] true to assume the input is expanded and skip
    *            expansion, false not to, defaults to false.
    *          [activeCtx] true to also return the active context used.
-   *          [loadDocument(url)] the document loader.
+   *          [documentLoader(url)] the document loader.
    *
    * @return mixed the compacted JSON-LD output.
    */
@@ -770,7 +772,7 @@ class JsonLdProcessor {
    *          [expandContext] a context to expand with.
    *          [keepFreeFloatingNodes] true to keep free-floating nodes,
    *            false not to, defaults to false.
-   *          [loadDocument(url)] the document loader.
+   *          [documentLoader(url)] the document loader.
    *
    * @return array the expanded JSON-LD output.
    */
@@ -857,7 +859,7 @@ class JsonLdProcessor {
    * @param assoc $options the options to use:
    *          [base] the base IRI to use.
    *          [expandContext] a context to expand with.
-   *          [loadDocument(url)] the document loader.
+   *          [documentLoader(url)] the document loader.
    *
    * @return array the flattened output.
    */
@@ -909,7 +911,7 @@ class JsonLdProcessor {
    *          [embed] default @embed flag (default: true).
    *          [explicit] default @explicit flag (default: false).
    *          [omitDefault] default @omitDefault flag (default: false).
-   *          [loadDocument(url)] the document loader.
+   *          [documentLoader(url)] the document loader.
    *
    * @return stdClass the framed JSON-LD output.
    */
@@ -1008,7 +1010,7 @@ class JsonLdProcessor {
    *          [expandContext] a context to expand with.
    *          [format] the format if output is a string:
    *            'application/nquads' for N-Quads.
-   *          [loadDocument(url)] the document loader.
+   *          [documentLoader(url)] the document loader.
    *
    * @return mixed the normalized output.
    */
@@ -1095,13 +1097,16 @@ class JsonLdProcessor {
    *          [expandContext] a context to expand with.
    *          [format] the format to use to output a string:
    *            'application/nquads' for N-Quads.
-   *          [loadDocument(url)] the document loader.
+   *          [produceGeneralizedRdf] true to output generalized RDF, false
+   *            to produce only standard RDF (default: false).
+   *          [documentLoader(url)] the document loader.
    *
    * @return mixed the resulting RDF dataset (or a serialization of it).
    */
   public function toRDF($input, $options) {
     self::setdefaults($options, array(
       'base' => is_string($input) ? $input : '',
+      'produceGeneralizedRdf' => false,
       'documentLoader' => 'jsonld_default_document_loader'));
 
     try {
@@ -1153,7 +1158,7 @@ class JsonLdProcessor {
    * @param stdClass $active_ctx the current active context.
    * @param mixed $local_ctx the local context to process.
    * @param assoc $options the options to use:
-   *          [loadDocument(url)] the document loader.
+   *          [documentLoader(url)] the document loader.
    *
    * @return stdClass the new active context.
    */
