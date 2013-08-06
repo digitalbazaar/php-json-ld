@@ -1164,6 +1164,7 @@ class JsonLdProcessor {
    */
   public function processContext($active_ctx, $local_ctx, $options) {
     self::setdefaults($options, array(
+      'base' => '',
       'documentLoader' => 'jsonld_default_document_loader'));
 
     // return initial context early for null context
