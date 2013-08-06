@@ -1115,7 +1115,7 @@ class JsonLdProcessor {
     }
     catch(JsonLdException $e) {
       throw new JsonLdException(
-        'Could not expand input before conversion to RDF.',
+        'Could not expand input before serialization to RDF.',
         'jsonld.RdfError', $e);
     }
 
@@ -1130,7 +1130,7 @@ class JsonLdProcessor {
     sort($graph_names);
     foreach($graph_names as $graph_name) {
       $graph = $node_map->{$graph_name};
-      $dataset->{$graph_name} = $this->_graphToRDF($graph, $namer);
+      $dataset->{$graph_name} = $this->_graphToRDF($graph, $namer, $options);
     }
 
     $rval = $dataset;
@@ -2636,7 +2636,7 @@ class JsonLdProcessor {
    * Converts an RDF dataset to JSON-LD.
    *
    * @param stdClass $dataset the RDF dataset.
-   * @param assoc $options the RDF conversion options.
+   * @param assoc $options the RDF serialization options.
    *
    * @return array the JSON-LD output.
    */
@@ -3109,6 +3109,12 @@ class JsonLdProcessor {
           $predicate->type = (strpos($property, '_:') === 0 ?
             'blank node' : 'IRI');
           $predicate->value = $property;
+
+          // skip bnode predicates unless producing generalized RDF
+          if($predicate->type === 'blank node' &&
+            !$options['produceGeneralizedRdf']) {
+            continue;
+          }
 
           // convert @list to triples
           if(self::_isList($item)) {
