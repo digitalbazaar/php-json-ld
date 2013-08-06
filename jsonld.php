@@ -3563,7 +3563,7 @@ class JsonLdProcessor {
                 // recurse into subject reference
                 if(self::_isSubjectReference($o)) {
                   $this->_matchFrame(
-                    $state, array($o->{'@id'}), $frame->{$prop},
+                    $state, array($o->{'@id'}), $frame->{$prop}[0]->{'@list'},
                     $list, '@list');
                 }
                 // include other values automatically
