@@ -2715,8 +2715,8 @@ class JsonLdProcessor {
         $node = $usage->node;
         $property = $usage->property;
         $head = $usage->value;
-        $list = [];
-        $list_nodes = [];
+        $list = array();
+        $list_nodes = array();
 
         // ensure node is a well-formed list node; it must:
         // 1. Be used only once in a list.
