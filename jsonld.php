@@ -3335,9 +3335,6 @@ class JsonLdProcessor {
         if(strpos($type, '_:') === 0) {
           $type = $input->{'@type'} = $namer->getName($type);
         }
-        if(!property_exists($graphs->{$graph}, $type)) {
-          $graphs->{$graph}->{$type} = (object)array('@id' => $type);
-        }
       }
       if($list !== null) {
         $list[] = $input;
@@ -3445,9 +3442,6 @@ class JsonLdProcessor {
         if($property === '@type') {
           // rename @type blank nodes
           $o = (strpos($o, '_:') === 0) ? $namer->getName($o) : $o;
-          if(!property_exists($graphs->{$graph}, $o)) {
-            $graphs->{$graph}->{$o} = (object)array('@id' => $o);
-          }
         }
 
         // handle embedded subject or subject reference
