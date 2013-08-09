@@ -2206,27 +2206,20 @@ class JsonLdProcessor {
         }
         // handle index container (skip if value is not an object)
         else if($container === '@index' && is_object($value)) {
-          $processor = $this;
-          $expand_index_map = function($active_property) use (
-            $processor, $active_ctx, $options, $value) {
-            $rval = array();
-            $keys = array_keys((array)$value);
-            sort($keys);
-            foreach($keys as $key) {
-              $val = $value->{$key};
-              $val = JsonLdProcessor::arrayify($val);
-              $val = $processor->_expand(
-                $active_ctx, $active_property, $val, $options, false);
-              foreach($val as $item) {
-                if(!property_exists($item, '@index')) {
-                  $item->{'@index'} = $key;
-                }
-                $rval[] = $item;
+          $expanded_value = array();
+          $value_keys = array_keys((array)$value);
+          sort($value_keys);
+          foreach($value_keys as $value_key) {
+            $val = $value->{$value_key};
+            $val = self::arrayify($val);
+            $val = $this->_expand($active_ctx, $key, $val, $options, false);
+            foreach($val as $item) {
+              if(!property_exists($item, '@index')) {
+                $item->{'@index'} = $value_key;
               }
+              $expanded_value[] = $item;
             }
-            return $rval;
-          };
-          $expanded_value = $expand_index_map($key);
+          }
         }
         else {
           // recurse into @list or @set keeping the active property
