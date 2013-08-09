@@ -2206,15 +2206,16 @@ class JsonLdProcessor {
         }
         // handle index container (skip if value is not an object)
         else if($container === '@index' && is_object($value)) {
+          $processor = $this;
           $expand_index_map = function($active_property) use (
-            $active_ctx, $options, $value) {
+            $processor, $active_ctx, $options, $value) {
             $rval = array();
             $keys = array_keys((array)$value);
             sort($keys);
             foreach($keys as $key) {
               $val = $value->{$key};
               $val = JsonLdProcessor::arrayify($val);
-              $val = $this->_expand(
+              $val = $processor->_expand(
                 $active_ctx, $active_property, $val, $options, false);
               foreach($val as $item) {
                 if(!property_exists($item, '@index')) {
