@@ -610,6 +610,7 @@ class JsonLdProcessor {
   const XSD_STRING = 'http://www.w3.org/2001/XMLSchema#string';
 
   /** RDF constants */
+  const RDF_LIST = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#List';
   const RDF_FIRST = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#first';
   const RDF_REST = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#rest';
   const RDF_NIL = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#nil';
@@ -2431,7 +2432,11 @@ class JsonLdProcessor {
       $ids = array_keys((array)$node_map);
       sort($ids);
       foreach($ids as $id) {
-        $subject->{'@graph'}[] = $node_map->{$id};
+        $node = $node_map->{$id};
+        // only add full subjects
+        if(!self::_isSubjectReference($node)) {
+          $subject->{'@graph'}[] = $node;
+        }
       }
     }
 
@@ -2440,7 +2445,11 @@ class JsonLdProcessor {
     $keys = array_keys((array)$default_graph);
     sort($keys);
     foreach($keys as $key) {
-      $flattened[] = $default_graph->{$key};
+      $node = $default_graph->{$key};
+      // only add full subjects to top-level
+      if(self::_isSubjectReference($node)) {
+        $flattened[] = $node;
+      }
     }
     return $flattened;
   }
@@ -2665,8 +2674,7 @@ class JsonLdProcessor {
         $node = $node_map->{$s};
 
         $object_is_id = ($o->type === 'IRI' || $o->type === 'blank node');
-        if($object_is_id && $o->value !== self::RDF_NIL &&
-          !property_exists($node_map, $o->value)) {
+        if($object_is_id && !property_exists($node_map, $o->value)) {
           $node_map->{$o->value} = (object)array('@id' => $o->value);
         }
 
@@ -2676,90 +2684,94 @@ class JsonLdProcessor {
           continue;
         }
 
-        if($object_is_id &&
-          $o->value === self::RDF_NIL && $p !== self::RDF_REST) {
-          // empty list detected
-          $value = (object)array('@list' => array());
-        }
-        else {
-          $value = self::_RDFToObject($o, $options['useNativeTypes']);
-        }
+        $value = self::_RDFToObject($o, $options['useNativeTypes']);
         self::addValue($node, $p, $value, array('propertyIsArray' => true));
 
-        // object may be the head of an RDF list but we can't know easily
-        // until all triples are read
-        if($o->type === 'blank node' &&
-          !($p === self::RDF_FIRST || $p === self::RDF_REST)) {
+        // object may be an RDF list/partial list node but we can't know
+        // easily until all triples are read
+        if($object_is_id) {
           $object = $node_map->{$o->value};
-          if(!property_exists($object, 'listHeadFor')) {
-            $object->listHeadFor = $value;
+          if(!property_exists($object, 'usages')) {
+            $object->usages = array();
           }
-          // can't be a list head if referenced more than once
-          else {
-            $object->listHeadFor = null;
-          }
+          $object->usages[] = (object)array(
+            'node' => $node,
+            'property' => $p,
+            'value' => $value);
         }
       }
     }
 
     // convert linked lists to @list arrays
     foreach($graph_map as $name => $graph_object) {
-      foreach($graph_object as $subject => $node) {
-        // if subject not in graph_object, it has been removed as it was
-        // part of an RDF list, continue
-        if(!property_exists($graph_object, $subject)) {
-          continue;
-        }
-        // if value is not an object, it can't be a list head, continue
-        $value = (property_exists($node, 'listHeadFor') ?
-          $node->listHeadFor : null);
-        if(!is_object($value)) {
-          continue;
-        }
+      // no @lists to be converted, continue
+      if(!property_exists($graph_object, self::RDF_NIL)) {
+        continue;
+      }
 
-        $list = array();
-        $eliminated_nodes = new stdClass();
-        while($subject !== self::RDF_NIL && $list !== null) {
-          // ensure node is a valid list node; node must:
-          // 1. Be a blank node
-          // 2. Have no keys other than: @id, listHeadFor, rdf:first, rdf:rest.
-          // 3. Have an array for rdf:first that has 1 item.
-          // 4. Have an array for rdf:rest that has 1 object with @id.
-          // 5. Not already be in a list (it is in the eliminated nodes map).
-          $node_key_count = (is_object($node) ?
-            count(array_keys((array)$node)) : 0);
-          if(!(is_object($node) && strpos($node->{'@id'}, '_:') === 0 &&
-            ($node_key_count === 3 || ($node_key_count === 4 &&
-              property_exists($node, 'listHeadFor'))) &&
-            property_exists($node, self::RDF_FIRST) &&
-            property_exists($node, self::RDF_REST) &&
-            is_array($node->{self::RDF_FIRST}) &&
-            count($node->{self::RDF_FIRST}) === 1 &&
-            is_array($node->{self::RDF_REST}) &&
-            count($node->{self::RDF_REST}) === 1 &&
-            is_object($node->{self::RDF_REST}[0]) &&
-            property_exists($node->{self::RDF_REST}[0], '@id') &&
-            !property_exists($eliminated_nodes, $subject))) {
-            $list = null;
+      // iterate backwards through each RDF list
+      $nil = $graph_object->{self::RDF_NIL};
+      foreach($nil->usages as $usage) {
+        $node = $usage->node;
+        $property = $usage->property;
+        $head = $usage->value;
+        $list = [];
+        $list_nodes = [];
+
+        // ensure node is a well-formed list node; it must:
+        // 1. Be used only once in a list.
+        // 2. Have an array for rdf:first that has 1 item.
+        // 3. Have an array for rdf:rest that has 1 item.
+        // 4. Have no keys other than: @id, usages, rdf:first, rdf:rest, and,
+        //   optionally, @type where the value is rdf:List.
+        $node_key_count = count(array_keys((array)$node));
+        while($property === self::RDF_REST && count($node->usages) === 1 &&
+          property_exists($node, self::RDF_FIRST) &&
+          property_exists($node, self::RDF_REST) &&
+          is_array($node->{self::RDF_FIRST}) &&
+          is_array($node->{self::RDF_REST}) &&
+          count($node->{self::RDF_FIRST}) === 1 &&
+          count($node->{self::RDF_REST}) === 1 &&
+          ($node_key_count === 4 || ($node_key_count === 5 &&
+            property_exists($node, '@type') && is_array($node->{'@type'}) &&
+            count($node->{'@type'}) === 1 &&
+            $node->{'@type'}[0] === self::RDF_LIST))) {
+          $list[] = $node->{self::RDF_FIRST}[0];
+          $list_nodes[] = $node->{'@id'};
+
+          // get next node, moving backwards through list
+          $usage = $node->usages[0];
+          $node = $usage->node;
+          $property = $usage->property;
+          $head = $usage->value;
+          $node_key_count = count(array_keys((array)$node));
+
+          // if node is not a blank node, then list head found
+          if(strpos($node->{'@id'}, '_:') !== 0) {
             break;
           }
-
-          $list[] = $node->{self::RDF_FIRST}[0];
-          $eliminated_nodes->{$node->{'@id'}} = true;
-          $subject = $node->{self::RDF_REST}[0]->{'@id'};
-          $node = (property_exists($graph_object, $subject) ?
-            $graph_object->{$subject} : null);
         }
 
-        // bad list detected, skip it
-        if($list === null) {
-          continue;
+        // list is nested in another list
+        if($property === self::RDF_FIRST) {
+          // empty list
+          if($node->{'@id'} === self::RDF_NIL) {
+            // can't convert rdf:nil to a @list object because it would
+            // result in a list of lists which isn't supported
+            continue;
+          }
+
+          // preserve list head
+          $head = $graph_object->{$head->{'@id'}}->{self::RDF_REST}[0];
+          array_pop($list);
+          array_pop($list_nodes);
         }
 
-        unset($value->{'@id'});
-        $value->{'@list'} = $list;
-        foreach($eliminated_nodes as $id => $b) {
-          unset($graph_object->{$id});
+        // transform list into @list object
+        unset($head->{'@id'});
+        $head->{'@list'} = array_reverse($list);
+        foreach($list_nodes as $list_node) {
+          unset($graph_object->{$list_node});
         }
       }
     }
@@ -2776,14 +2788,14 @@ class JsonLdProcessor {
         sort($subjects_);
         foreach($subjects_ as $subject_) {
           $node_ = $graph_object->{$subject_};
-          unset($node_->listHeadFor);
+          unset($node_->usages);
           // only add full subjects to top-level
           if(!self::_isSubjectReference($node_)) {
             $node->{'@graph'}[] = $node_;
           }
         }
       }
-      unset($node->listHeadFor);
+      unset($node->usages);
       // only add full subjects to top-level
       if(!self::_isSubjectReference($node)) {
         $result[] = $node;
