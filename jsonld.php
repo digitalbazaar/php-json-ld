@@ -2447,7 +2447,7 @@ class JsonLdProcessor {
     foreach($keys as $key) {
       $node = $default_graph->{$key};
       // only add full subjects to top-level
-      if(self::_isSubjectReference($node)) {
+      if(!self::_isSubjectReference($node)) {
         $flattened[] = $node;
       }
     }
@@ -3928,7 +3928,8 @@ class JsonLdProcessor {
       $t1->object->language !== $t2->object->language) {
       return false;
     }
-    if($t1->object->datatype !== $t2->object->datatype) {
+    if(property_exists($t1->object, 'datatype') &&
+      $t1->object->datatype !== $t2->object->datatype) {
       return false;
     }
     return true;
