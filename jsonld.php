@@ -208,7 +208,7 @@ function jsonld_get_url($url) {
     $document_loader = $jsonld_default_document_loader;
   }
 
-  $remote_doc = $document_loader($url);
+  $remote_doc = call_user_func($document_loader, $url);
   if($remote_doc) {
     return $remote_doc->document;
   }
@@ -1083,7 +1083,7 @@ class JsonLdProcessor {
       else {
         $callable = $jsonld_rdf_parsers->{$options['format']};
       }
-      $dataset = $callable($dataset);
+      $dataset = call_user_func($callable, $dataset);
     }
 
     // convert from RDF
@@ -2213,7 +2213,7 @@ class JsonLdProcessor {
             sort($keys);
             foreach($keys as $key) {
               $val = $value->{$key};
-              $val = self::arrayify($val);
+              $val = JsonLdProcessor::arrayify($val);
               $val = $this->_expand(
                 $active_ctx, $active_property, $val, $options, false);
               foreach($val as $item) {
@@ -4929,7 +4929,7 @@ class JsonLdProcessor {
       $_cycles->{$url} = true;
 
       // retrieve URL
-      $remote_doc = $load_document($url);
+      $remote_doc = call_user_func($load_document, $url);
       $ctx = $remote_doc->document;
 
       // parse string context as JSON
