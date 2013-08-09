@@ -1,0 +1,14 @@
+language: php
+python:
+  - 5.5
+  - 5.4
+  - 5.3
+# download test suite and run tests... submodule? meta testing project with
+# all of the reference implementations?
+script: 
+  - git clone https://github.com/json-ld/json-ld.org.git spec
+  - php jsonld-tests.php -d spec/test-suite/tests
+notifications:
+  email:
+    on_success: change
+    on_failure: change
