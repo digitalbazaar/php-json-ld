@@ -361,7 +361,7 @@ class JsonLdTest {
         return $err->getCode();
       }
       if($err->cause) {
-        return $this->getJsonLdErrorCode($err);
+        return $this->getJsonLdErrorCode($err->cause);
       }
     }
     return $err->getMessage();
