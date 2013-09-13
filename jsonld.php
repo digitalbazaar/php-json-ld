@@ -2079,6 +2079,9 @@ class JsonLdProcessor {
     // recursively expand array
     if(is_array($element)) {
       $rval = array();
+      $container = self::getContextValue(
+        $active_ctx, $active_property, '@container');
+      $inside_list = $inside_list || $container === '@list';
       foreach($element as $e) {
         // expand element
         $e = $this->_expand(
@@ -2087,10 +2090,10 @@ class JsonLdProcessor {
           // lists of lists are illegal
           throw new JsonLdException(
             'Invalid JSON-LD syntax; lists of lists are not permitted.',
-            'jsonld.SyntaxError');
+            'jsonld.SyntaxError', 'list of lists');
         }
         // drop null values
-        else if($e !== null) {
+        if($e !== null) {
           if(is_array($e)) {
             $rval = array_merge($rval, $e);
           }
@@ -2103,7 +2106,7 @@ class JsonLdProcessor {
     }
 
     if(!is_object($element)) {
-      // drop top-level scalars that are not in lists
+      // drop free-floating scalars that are not in lists
       if(!$inside_list &&
         ($active_property === null ||
         $this->_expandIri($active_ctx, $active_property,
@@ -2137,14 +2140,6 @@ class JsonLdProcessor {
         continue;
       }
 
-      // get term definition for key
-      if(property_exists($active_ctx->mappings, $key)) {
-        $mapping = $active_ctx->mappings->{$key};
-      }
-      else {
-        $mapping = null;
-      }
-
       // expand key to IRI
       $expanded_property = $this->_expandIri(
         $active_ctx, $key, array('vocab' => true));
@@ -2156,19 +2151,35 @@ class JsonLdProcessor {
         continue;
       }
 
-      if(self::_isKeyword($expanded_property) &&
-        $expanded_active_property === '@reverse') {
-        throw new JsonLdException(
-          'Invalid JSON-LD syntax; a keyword cannot be used as a @reverse ' .
-          'property.',
-          'jsonld.SyntaxError', array('value' => $value));
+      if(self::_isKeyword($expanded_property)) {
+        if($expanded_active_property === '@reverse') {
+          throw new JsonLdException(
+            'Invalid JSON-LD syntax; a keyword cannot be used as a @reverse ' .
+            'property.', 'jsonld.SyntaxError', 'invalid reverse property map',
+            array('value' => $value));
+        }
+        if(property_exists($rval, $expanded_property)) {
+          throw new JsonLdException(
+            'Invalid JSON-LD syntax; colliding keywords detected.',
+            'jsonld.SyntaxError', 'colliding keywords',
+            array('keyword' => $expanded_property));
+        }
       }
 
       // syntax error if @id is not a string
       if($expanded_property === '@id' && !is_string($value)) {
-        throw new JsonLdException(
+        if(!isset($options['isFrame']) && !$options['isFrame']) {
+          throw new JsonLdException(
             'Invalid JSON-LD syntax; "@id" value must a string.',
-            'jsonld.SyntaxError', array('value' => $value));
+            'jsonld.SyntaxError', 'invalid @id value',
+            array('value' => $value));
+        }
+        if(!is_object($value)) {
+          throw new JsonLdException(
+            'Invalid JSON-LD syntax; "@id" value must a string or an object.',
+            'jsonld.SyntaxError', 'invalid @id value',
+            array('value' => $value));
+        }
       }
 
       // validate @type value
@@ -2180,9 +2191,9 @@ class JsonLdProcessor {
       if($expanded_property === '@graph' &&
         !(is_object($value) || is_array($value))) {
         throw new JsonLdException(
-          'Invalid JSON-LD syntax; "@value" value must not be an ' .
-          'object or an array.',
-          'jsonld.SyntaxError', array('value' => $value));
+          'Invalid JSON-LD syntax; "@graph" value must not be an ' .
+          'object or an array.', 'jsonld.SyntaxError',
+          'invalid @graph value', array('value' => $value));
       }
 
       // @value must not be an object or an array
@@ -2190,15 +2201,18 @@ class JsonLdProcessor {
         (is_object($value) || is_array($value))) {
         throw new JsonLdException(
           'Invalid JSON-LD syntax; "@value" value must not be an ' .
-          'object or an array.',
-          'jsonld.SyntaxError', array('value' => $value));
+          'object or an array.', 'jsonld.SyntaxError',
+          'invalid value object value', array('value' => $value));
       }
 
       // @language must be a string
-      if($expanded_property === '@language' && !is_string($value)) {
-        throw new JsonLdException(
-          'Invalid JSON-LD syntax; "@language" value must not be a string.',
-          'jsonld.SyntaxError', array('value' => $value));
+      if($expanded_property === '@language') {
+        if(!is_string($value)) {
+          throw new JsonLdException(
+            'Invalid JSON-LD syntax; "@language" value must not be a string.',
+            'jsonld.SyntaxError', 'invalid language-tagged string',
+            array('value' => $value));
+        }
         // ensure language value is lowercase
         $value = strtolower($value);
       }
@@ -2208,7 +2222,8 @@ class JsonLdProcessor {
         if(!is_string($value)) {
           throw new JsonLdException(
             'Invalid JSON-LD syntax; "@index" value must be a string.',
-            'jsonld.SyntaxError', array('value' => $value));
+            'jsonld.SyntaxError', 'invalid @index value',
+            array('value' => $value));
         }
       }
 
@@ -2217,7 +2232,8 @@ class JsonLdProcessor {
         if(!is_object($value)) {
           throw new JsonLdException(
             'Invalid JSON-LD syntax; "@reverse" value must be an object.',
-            'jsonld.SyntaxError', array('value' => $value));
+            'jsonld.SyntaxError', 'invalid @reverse value',
+            array('value' => $value));
         }
 
         $expanded_value = $this->_expand(
@@ -2253,8 +2269,8 @@ class JsonLdProcessor {
             if(self::_isValue($item) || self::_isList($item)) {
               throw new JsonLdException(
                 'Invalid JSON-LD syntax; "@reverse" value must not be a ' +
-                '@value or an @list.',
-                'jsonld.SyntaxError',
+                '@value or an @list.', 'jsonld.SyntaxError',
+                'invalid reverse property value',
                 array('value' => $expanded_value));
             }
             self::addValue(
@@ -2290,7 +2306,7 @@ class JsonLdProcessor {
         }
       }
       else {
-        // recurse into @list or @set keeping the active property
+        // recurse into @list or @set
         $is_list = ($expanded_property === '@list');
         if($is_list || $expanded_property === '@set') {
           $next_active_property = $active_property;
@@ -2302,7 +2318,7 @@ class JsonLdProcessor {
           if($is_list && self::_isList($expanded_value)) {
             throw new JsonLdException(
               'Invalid JSON-LD syntax; lists of lists are not permitted.',
-              'jsonld.SyntaxError');
+              'jsonld.SyntaxError', 'list of lists');
           }
         }
         else {
@@ -2336,8 +2352,9 @@ class JsonLdProcessor {
           if(self::_isValue($item) || self::_isList($item)) {
             throw new JsonLdException(
               'Invalid JSON-LD syntax; "@reverse" value must not be a ' +
-              '@value or an @list.',
-              'jsonld.SyntaxError', array('value' => $expanded_value));
+              '@value or an @list.', 'jsonld.SyntaxError',
+              'invalid reverse property value',
+              array('value' => $expanded_value));
           }
           self::addValue(
             $reverse_map, $expanded_property, $item,
@@ -2368,7 +2385,8 @@ class JsonLdProcessor {
         throw new JsonLdException(
           'Invalid JSON-LD syntax; an element containing "@value" may not ' .
           'contain both "@type" and "@language".',
-          'jsonld.SyntaxError', array('element' => $rval));
+          'jsonld.SyntaxError', 'invalid value object',
+          array('element' => $rval));
       }
       $valid_count = $count - 1;
       if(property_exists($rval, '@type')) {
@@ -2385,16 +2403,29 @@ class JsonLdProcessor {
           'Invalid JSON-LD syntax; an element containing "@value" may only ' .
           'have an "@index" property and at most one other property ' .
           'which can be "@type" or "@language".',
-          'jsonld.SyntaxError', array('element' => $rval));
+          'jsonld.SyntaxError', 'invalid value object',
+          array('element' => $rval));
       }
       // drop null @values
       if($rval->{'@value'} === null) {
         $rval = null;
       }
-      // drop @language if @value isn't a string
+      // if @language is present, @value must be a string
       else if(property_exists($rval, '@language') &&
         !is_string($rval->{'@value'})) {
-        unset($rval->{'@language'});
+        throw new JsonLdException(
+          'Invalid JSON-LD syntax; only strings may be language-tagged.',
+          'jsonld.SyntaxError', 'invalid language-tagged value',
+          array('element' => $rval));
+      }
+      else if(property_exists($rval, '@type') &&
+        !self::_isAbsoluteIri($rval->{'@type'}) ||
+        strpos($rval->{'@type'}, '_:') === 0) {
+        throw new JsonLdException(
+          'Invalid JSON-LD syntax; an element containing "@value" ' .
+          'and "@type" must have an absolute IRI for the value ' .
+          'of "@type".', 'jsonld.SyntaxError', 'invalid typed value',
+          array('element' => $rval));
       }
     }
     // convert @type to an array
@@ -2408,8 +2439,8 @@ class JsonLdProcessor {
         throw new JsonLdException(
           'Invalid JSON-LD syntax; if an element has the property "@set" ' .
           'or "@list", then it can have at most one other property that is ' .
-          '"@index".',
-          'jsonld.SyntaxError', array('element' => $rval));
+          '"@index".', 'jsonld.SyntaxError', 'invalid set or list object',
+          array('element' => $rval));
       }
       // optimize away @set
       if(property_exists($rval, '@set')) {
@@ -2427,23 +2458,11 @@ class JsonLdProcessor {
     if(is_object($rval) &&
       !$options['keepFreeFloatingNodes'] && !$inside_list &&
       ($active_property === null || $expanded_active_property === '@graph')) {
-      // drop empty object or top-level @value
-      if($count === 0 || property_exists($rval, '@value')) {
+      // drop empty object or top-level @value/@list, or object with only @id
+      if($count === 0 || property_exists($rval, '@value') ||
+        property_exists($rval, '@list') ||
+        ($count === 1 && property_exists($rval, '@id'))) {
         $rval = null;
-      }
-      else {
-        // drop subjects that generate no triples
-        $has_triples = false;
-        $ignore = array('@graph', '@type');
-        foreach($keys as $key) {
-          if(!self::_isKeyword($key) || in_array($key, $ignore)) {
-            $has_triples = true;
-            break;
-          }
-        }
-        if(!$has_triples) {
-          $rval = null;
-        }
       }
     }
 
@@ -5430,9 +5449,9 @@ jsonld_register_rdf_parser(
  */
 class JsonLdException extends Exception {
   public function __construct(
-    $msg, $type, /*$code='error',*/ $details=null, $previous=null) {
+    $msg, $type, $code='error', $details=null, $previous=null) {
     $this->type = $type;
-    //$this->code = $code;
+    $this->code = $code;
     $this->details = $details;
     $this->cause = $previous;
     parent::__construct($msg, 0, $previous);
