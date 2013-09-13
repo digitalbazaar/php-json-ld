@@ -1184,7 +1184,10 @@ class JsonLdProcessor {
     sort($graph_names);
     foreach($graph_names as $graph_name) {
       $graph = $node_map->{$graph_name};
-      $dataset->{$graph_name} = $this->_graphToRDF($graph, $namer, $options);
+      // skip relative IRIs
+      if($graph_name === '@default' || self::_isAbsoluteIri($graph_name)) {
+        $dataset->{$graph_name} = $this->_graphToRDF($graph, $namer, $options);
+      }
     }
 
     $rval = $dataset;
@@ -3159,6 +3162,11 @@ class JsonLdProcessor {
         }
 
         foreach($items as $item) {
+          // skip relative IRI subjects and predicates
+          if(!(self::_isAbsoluteIri($id) && self::_isAbsoluteIri($property))) {
+            continue;
+          }
+
           // RDF subject
           $subject = new stdClass();
           $subject->type = (strpos($id, '_:') === 0) ? 'blank node' : 'IRI';
@@ -3184,10 +3192,13 @@ class JsonLdProcessor {
           // convert value or node object to triple
           else {
             $object = $this->_objectToRDF($item);
-            $rval[] = (object)array(
-              'subject' => $subject,
-              'predicate' => $predicate,
-              'object' => $object);
+            // skip null objects (they are relative IRIs)
+            if($object) {
+              $rval[] = (object)array(
+                'subject' => $subject,
+                'predicate' => $predicate,
+                'object' => $object);
+            }
           }
         }
       }
@@ -3223,8 +3234,13 @@ class JsonLdProcessor {
       $subject = $blank_node;
       $predicate = $first;
       $object = $this->_objectToRDF($item);
-      $triples[] = (object)array(
-        'subject' => $subject, 'predicate' => $predicate, 'object' => $object);
+      // skip null objects (they are relative IRIs)
+      if($object) {
+        $triples[] = (object)array(
+          'subject' => $subject,
+          'predicate' => $predicate,
+          'object' => $object);
+      }
 
       $predicate = $rest;
     }
@@ -3279,6 +3295,11 @@ class JsonLdProcessor {
       $id = is_object($item) ? $item->{'@id'} : $item;
       $object->type = (strpos($id, '_:') === 0) ? 'blank node' : 'IRI';
       $object->value = $id;
+    }
+
+    // skip relative IRIs
+    if($object->type === 'IRI' && !self::_isAbsoluteIri($object->value)) {
+      return null;
     }
 
     return $object;
