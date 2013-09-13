@@ -2102,351 +2102,352 @@ class JsonLdProcessor {
       return $rval;
     }
 
-    // recursively expand object
-    if(is_object($element)) {
-      // if element has a context, process it
-      if(property_exists($element, '@context')) {
-        $active_ctx = $this->_processContext(
-          $active_ctx, $element->{'@context'}, $options);
+    if(!is_object($element)) {
+      // drop top-level scalars that are not in lists
+      if(!$inside_list &&
+        ($active_property === null ||
+        $this->_expandIri($active_ctx, $active_property,
+          array('vocab' => true)) === '@graph')) {
+        return null;
       }
 
-      // expand the active property
-      $expanded_active_property = $this->_expandIri(
-        $active_ctx, $active_property, array('vocab' => true));
+      // expand element according to value expansion rules
+      return $this->_expandValue($active_ctx, $active_property, $element);
+    }
 
-      $rval = new stdClass();
-      $keys = array_keys((array)$element);
-      sort($keys);
-      foreach($keys as $key) {
-        $value = $element->{$key};
+    // recursively expand object:
 
-        if($key === '@context') {
-          continue;
-        }
+    // if element has a context, process it
+    if(property_exists($element, '@context')) {
+      $active_ctx = $this->_processContext(
+        $active_ctx, $element->{'@context'}, $options);
+    }
 
-        // get term definition for key
-        if(property_exists($active_ctx->mappings, $key)) {
-          $mapping = $active_ctx->mappings->{$key};
-        }
-        else {
-          $mapping = null;
-        }
+    // expand the active property
+    $expanded_active_property = $this->_expandIri(
+      $active_ctx, $active_property, array('vocab' => true));
 
-        // expand key to IRI
-        $expanded_property = $this->_expandIri(
-          $active_ctx, $key, array('vocab' => true));
+    $rval = new stdClass();
+    $keys = array_keys((array)$element);
+    sort($keys);
+    foreach($keys as $key) {
+      $value = $element->{$key};
 
-        // drop non-absolute IRI keys that aren't keywords
-        if($expanded_property === null ||
-          !(self::_isAbsoluteIri($expanded_property) ||
-          self::_isKeyword($expanded_property))) {
-          continue;
-        }
+      if($key === '@context') {
+        continue;
+      }
 
-        if(self::_isKeyword($expanded_property) &&
-          $expanded_active_property === '@reverse') {
+      // get term definition for key
+      if(property_exists($active_ctx->mappings, $key)) {
+        $mapping = $active_ctx->mappings->{$key};
+      }
+      else {
+        $mapping = null;
+      }
+
+      // expand key to IRI
+      $expanded_property = $this->_expandIri(
+        $active_ctx, $key, array('vocab' => true));
+
+      // drop non-absolute IRI keys that aren't keywords
+      if($expanded_property === null ||
+        !(self::_isAbsoluteIri($expanded_property) ||
+        self::_isKeyword($expanded_property))) {
+        continue;
+      }
+
+      if(self::_isKeyword($expanded_property) &&
+        $expanded_active_property === '@reverse') {
+        throw new JsonLdException(
+          'Invalid JSON-LD syntax; a keyword cannot be used as a @reverse ' .
+          'property.',
+          'jsonld.SyntaxError', array('value' => $value));
+      }
+
+      // syntax error if @id is not a string
+      if($expanded_property === '@id' && !is_string($value)) {
+        throw new JsonLdException(
+            'Invalid JSON-LD syntax; "@id" value must a string.',
+            'jsonld.SyntaxError', array('value' => $value));
+      }
+
+      // validate @type value
+      if($expanded_property === '@type') {
+        $this->_validateTypeValue($value);
+      }
+
+      // @graph must be an array or an object
+      if($expanded_property === '@graph' &&
+        !(is_object($value) || is_array($value))) {
+        throw new JsonLdException(
+          'Invalid JSON-LD syntax; "@value" value must not be an ' .
+          'object or an array.',
+          'jsonld.SyntaxError', array('value' => $value));
+      }
+
+      // @value must not be an object or an array
+      if($expanded_property === '@value' &&
+        (is_object($value) || is_array($value))) {
+        throw new JsonLdException(
+          'Invalid JSON-LD syntax; "@value" value must not be an ' .
+          'object or an array.',
+          'jsonld.SyntaxError', array('value' => $value));
+      }
+
+      // @language must be a string
+      if($expanded_property === '@language' && !is_string($value)) {
+        throw new JsonLdException(
+          'Invalid JSON-LD syntax; "@language" value must not be a string.',
+          'jsonld.SyntaxError', array('value' => $value));
+        // ensure language value is lowercase
+        $value = strtolower($value);
+      }
+
+      // @index must be a string
+      if($expanded_property === '@index') {
+        if(!is_string($value)) {
           throw new JsonLdException(
-            'Invalid JSON-LD syntax; a keyword cannot be used as a @reverse ' .
-            'property.',
+            'Invalid JSON-LD syntax; "@index" value must be a string.',
+            'jsonld.SyntaxError', array('value' => $value));
+        }
+      }
+
+      // @reverse must be an object
+      if($expanded_property === '@reverse') {
+        if(!is_object($value)) {
+          throw new JsonLdException(
+            'Invalid JSON-LD syntax; "@reverse" value must be an object.',
             'jsonld.SyntaxError', array('value' => $value));
         }
 
-        // syntax error if @id is not a string
-        if($expanded_property === '@id' && !is_string($value)) {
-          throw new JsonLdException(
-              'Invalid JSON-LD syntax; "@id" value must a string.',
-              'jsonld.SyntaxError', array('value' => $value));
-        }
+        $expanded_value = $this->_expand(
+          $active_ctx, '@reverse', $value, $options, $inside_list);
 
-        // validate @type value
-        if($expanded_property === '@type') {
-          $this->_validateTypeValue($value);
-        }
-
-        // @graph must be an array or an object
-        if($expanded_property === '@graph' &&
-          !(is_object($value) || is_array($value))) {
-          throw new JsonLdException(
-            'Invalid JSON-LD syntax; "@value" value must not be an ' .
-            'object or an array.',
-            'jsonld.SyntaxError', array('value' => $value));
-        }
-
-        // @value must not be an object or an array
-        if($expanded_property === '@value' &&
-          (is_object($value) || is_array($value))) {
-          throw new JsonLdException(
-            'Invalid JSON-LD syntax; "@value" value must not be an ' .
-            'object or an array.',
-            'jsonld.SyntaxError', array('value' => $value));
-        }
-
-        // @language must be a string
-        if($expanded_property === '@language' && !is_string($value)) {
-          throw new JsonLdException(
-            'Invalid JSON-LD syntax; "@language" value must not be a string.',
-            'jsonld.SyntaxError', array('value' => $value));
-          // ensure language value is lowercase
-          $value = strtolower($value);
-        }
-
-        // @index must be a string
-        if($expanded_property === '@index') {
-          if(!is_string($value)) {
-            throw new JsonLdException(
-              'Invalid JSON-LD syntax; "@index" value must be a string.',
-              'jsonld.SyntaxError', array('value' => $value));
-          }
-        }
-
-        // @reverse must be an object
-        if($expanded_property === '@reverse') {
-          if(!is_object($value)) {
-            throw new JsonLdException(
-              'Invalid JSON-LD syntax; "@reverse" value must be an object.',
-              'jsonld.SyntaxError', array('value' => $value));
-          }
-
-          $expanded_value = $this->_expand(
-            $active_ctx, '@reverse', $value, $options, $inside_list);
-
-          // properties double-reversed
-          if(property_exists($expanded_value, '@reverse')) {
-            foreach($expanded_value->{'@reverse'} as $rproperty => $rvalue) {
-              self::addValue(
-                $rval, $rproperty, $rvalue, array('propertyIsArray' => true));
-            }
-          }
-
-          // FIXME: can this be merged with code below to simplify?
-          // merge in all reversed properties
-          if(property_exists($rval, '@reverse')) {
-            $reverse_map = $rval->{'@reverse'};
-          }
-          else {
-            $reverse_map = null;
-          }
-          foreach($expanded_value as $property => $items) {
-            if($property === '@reverse') {
-              continue;
-            }
-            if($reverse_map === null) {
-              $reverse_map = $rval->{'@reverse'} = new stdClass();
-            }
+        // properties double-reversed
+        if(property_exists($expanded_value, '@reverse')) {
+          foreach($expanded_value->{'@reverse'} as $rproperty => $rvalue) {
             self::addValue(
-              $reverse_map, $property, array(),
-              array('propertyIsArray' => true));
-            foreach($items as $item) {
-              if(self::_isValue($item) || self::_isList($item)) {
-                throw new JsonLdException(
-                  'Invalid JSON-LD syntax; "@reverse" value must not be a ' +
-                  '@value or an @list.',
-                  'jsonld.SyntaxError',
-                  array('value' => $expanded_value));
-              }
-              self::addValue(
-                $reverse_map, $property, $item,
-                array('propertyIsArray' => true));
-            }
+              $rval, $rproperty, $rvalue, array('propertyIsArray' => true));
           }
-
-          continue;
         }
 
-        $container = self::getContextValue($active_ctx, $key, '@container');
-
-        // handle language map container (skip if value is not an object)
-        if($container === '@language' && is_object($value)) {
-          $expanded_value = $this->_expandLanguageMap($value);
-        }
-        // handle index container (skip if value is not an object)
-        else if($container === '@index' && is_object($value)) {
-          $expanded_value = array();
-          $value_keys = array_keys((array)$value);
-          sort($value_keys);
-          foreach($value_keys as $value_key) {
-            $val = $value->{$value_key};
-            $val = self::arrayify($val);
-            $val = $this->_expand($active_ctx, $key, $val, $options, false);
-            foreach($val as $item) {
-              if(!property_exists($item, '@index')) {
-                $item->{'@index'} = $value_key;
-              }
-              $expanded_value[] = $item;
-            }
-          }
+        // FIXME: can this be merged with code below to simplify?
+        // merge in all reversed properties
+        if(property_exists($rval, '@reverse')) {
+          $reverse_map = $rval->{'@reverse'};
         }
         else {
-          // recurse into @list or @set keeping the active property
-          $is_list = ($expanded_property === '@list');
-          if($is_list || $expanded_property === '@set') {
-            $next_active_property = $active_property;
-            if($is_list && $expanded_active_property === '@graph') {
-              $next_active_property = null;
-            }
-            $expanded_value = $this->_expand(
-              $active_ctx, $next_active_property, $value, $options, $is_list);
-            if($is_list && self::_isList($expanded_value)) {
-              throw new JsonLdException(
-                'Invalid JSON-LD syntax; lists of lists are not permitted.',
-                'jsonld.SyntaxError');
-            }
+          $reverse_map = null;
+        }
+        foreach($expanded_value as $property => $items) {
+          if($property === '@reverse') {
+            continue;
           }
-          else {
-            // recursively expand value with key as new active property
-            $expanded_value = $this->_expand(
-              $active_ctx, $key, $value, $options, false);
+          if($reverse_map === null) {
+            $reverse_map = $rval->{'@reverse'} = new stdClass();
           }
-        }
-
-        // drop null values if property is not @value
-        if($expanded_value === null && $expanded_property !== '@value') {
-          continue;
-        }
-
-        // convert expanded value to @list if container specifies it
-        if($expanded_property !== '@list' && !self::_isList($expanded_value) &&
-          $container === '@list') {
-          // ensure expanded value is an array
-          $expanded_value = (object)array(
-            '@list' => self::arrayify($expanded_value));
-        }
-
-        // FIXME: can this be merged with code above to simplify?
-        // merge in reverse properties
-        if(property_exists($active_ctx->mappings, $key) &&
-          $active_ctx->mappings->{$key} &&
-          $active_ctx->mappings->{$key}->reverse) {
-          $reverse_map = $rval->{'@reverse'} = new stdClass();
-          $expanded_value = self::arrayify($expanded_value);
-          foreach($expanded_value as $item) {
+          self::addValue(
+            $reverse_map, $property, array(),
+            array('propertyIsArray' => true));
+          foreach($items as $item) {
             if(self::_isValue($item) || self::_isList($item)) {
               throw new JsonLdException(
                 'Invalid JSON-LD syntax; "@reverse" value must not be a ' +
                 '@value or an @list.',
-                'jsonld.SyntaxError', array('value' => $expanded_value));
+                'jsonld.SyntaxError',
+                array('value' => $expanded_value));
             }
             self::addValue(
-              $reverse_map, $expanded_property, $item,
+              $reverse_map, $property, $item,
               array('propertyIsArray' => true));
           }
-          continue;
         }
 
-        // add value for property
-        // use an array except for certain keywords
-        $use_array = (!in_array(
-          $expanded_property, array(
-            '@index', '@id', '@type', '@value', '@language')));
-        self::addValue(
-          $rval, $expanded_property, $expanded_value,
-          array('propertyIsArray' => $use_array));
+        continue;
       }
 
-      // get property count on expanded output
-      $keys = array_keys((array)$rval);
-      $count = count($keys);
+      $container = self::getContextValue($active_ctx, $key, '@container');
 
-      // @value must only have @language or @type
-      if(property_exists($rval, '@value')) {
-        // @value must only have @language or @type
-        if(property_exists($rval, '@type') &&
-          property_exists($rval, '@language')) {
-          throw new JsonLdException(
-            'Invalid JSON-LD syntax; an element containing "@value" may not ' .
-            'contain both "@type" and "@language".',
-            'jsonld.SyntaxError', array('element' => $rval));
-        }
-        $valid_count = $count - 1;
-        if(property_exists($rval, '@type')) {
-          $valid_count -= 1;
-        }
-        if(property_exists($rval, '@index')) {
-          $valid_count -= 1;
-        }
-        if(property_exists($rval, '@language')) {
-          $valid_count -= 1;
-        }
-        if($valid_count !== 0) {
-          throw new JsonLdException(
-            'Invalid JSON-LD syntax; an element containing "@value" may only ' .
-            'have an "@index" property and at most one other property ' .
-            'which can be "@type" or "@language".',
-            'jsonld.SyntaxError', array('element' => $rval));
-        }
-        // drop null @values
-        if($rval->{'@value'} === null) {
-          $rval = null;
-        }
-        // drop @language if @value isn't a string
-        else if(property_exists($rval, '@language') &&
-          !is_string($rval->{'@value'})) {
-          unset($rval->{'@language'});
+      // handle language map container (skip if value is not an object)
+      if($container === '@language' && is_object($value)) {
+        $expanded_value = $this->_expandLanguageMap($value);
+      }
+      // handle index container (skip if value is not an object)
+      else if($container === '@index' && is_object($value)) {
+        $expanded_value = array();
+        $value_keys = array_keys((array)$value);
+        sort($value_keys);
+        foreach($value_keys as $value_key) {
+          $val = $value->{$value_key};
+          $val = self::arrayify($val);
+          $val = $this->_expand($active_ctx, $key, $val, $options, false);
+          foreach($val as $item) {
+            if(!property_exists($item, '@index')) {
+              $item->{'@index'} = $value_key;
+            }
+            $expanded_value[] = $item;
+          }
         }
       }
-      // convert @type to an array
-      else if(property_exists($rval, '@type') && !is_array($rval->{'@type'})) {
-        $rval->{'@type'} = array($rval->{'@type'});
-      }
-      // handle @set and @list
-      else if(property_exists($rval, '@set') ||
-        property_exists($rval, '@list')) {
-        if($count > 1 && ($count !== 2 && property_exists($rval, '@index'))) {
-          throw new JsonLdException(
-            'Invalid JSON-LD syntax; if an element has the property "@set" ' .
-            'or "@list", then it can have at most one other property that is ' .
-            '"@index".',
-            'jsonld.SyntaxError', array('element' => $rval));
-        }
-        // optimize away @set
-        if(property_exists($rval, '@set')) {
-          $rval = $rval->{'@set'};
-          $keys = array_keys((array)$rval);
-          $count = count($keys);
-        }
-      }
-      // drop objects with only @language
-      else if($count === 1 && property_exists($rval, '@language')) {
-        $rval = null;
-      }
-
-      // drop certain top-level objects that do not occur in lists
-      if(is_object($rval) &&
-        !$options['keepFreeFloatingNodes'] && !$inside_list &&
-        ($active_property === null || $expanded_active_property === '@graph')) {
-        // drop empty object or top-level @value
-        if($count === 0 || property_exists($rval, '@value')) {
-          $rval = null;
+      else {
+        // recurse into @list or @set keeping the active property
+        $is_list = ($expanded_property === '@list');
+        if($is_list || $expanded_property === '@set') {
+          $next_active_property = $active_property;
+          if($is_list && $expanded_active_property === '@graph') {
+            $next_active_property = null;
+          }
+          $expanded_value = $this->_expand(
+            $active_ctx, $next_active_property, $value, $options, $is_list);
+          if($is_list && self::_isList($expanded_value)) {
+            throw new JsonLdException(
+              'Invalid JSON-LD syntax; lists of lists are not permitted.',
+              'jsonld.SyntaxError');
+          }
         }
         else {
-          // drop subjects that generate no triples
-          $has_triples = false;
-          $ignore = array('@graph', '@type');
-          foreach($keys as $key) {
-            if(!self::_isKeyword($key) || in_array($key, $ignore)) {
-              $has_triples = true;
-              break;
-            }
-          }
-          if(!$has_triples) {
-            $rval = null;
-          }
+          // recursively expand value with key as new active property
+          $expanded_value = $this->_expand(
+            $active_ctx, $key, $value, $options, false);
         }
       }
 
-      return $rval;
+      // drop null values if property is not @value
+      if($expanded_value === null && $expanded_property !== '@value') {
+        continue;
+      }
+
+      // convert expanded value to @list if container specifies it
+      if($expanded_property !== '@list' && !self::_isList($expanded_value) &&
+        $container === '@list') {
+        // ensure expanded value is an array
+        $expanded_value = (object)array(
+          '@list' => self::arrayify($expanded_value));
+      }
+
+      // FIXME: can this be merged with code above to simplify?
+      // merge in reverse properties
+      if(property_exists($active_ctx->mappings, $key) &&
+        $active_ctx->mappings->{$key} &&
+        $active_ctx->mappings->{$key}->reverse) {
+        $reverse_map = $rval->{'@reverse'} = new stdClass();
+        $expanded_value = self::arrayify($expanded_value);
+        foreach($expanded_value as $item) {
+          if(self::_isValue($item) || self::_isList($item)) {
+            throw new JsonLdException(
+              'Invalid JSON-LD syntax; "@reverse" value must not be a ' +
+              '@value or an @list.',
+              'jsonld.SyntaxError', array('value' => $expanded_value));
+          }
+          self::addValue(
+            $reverse_map, $expanded_property, $item,
+            array('propertyIsArray' => true));
+        }
+        continue;
+      }
+
+      // add value for property
+      // use an array except for certain keywords
+      $use_array = (!in_array(
+        $expanded_property, array(
+          '@index', '@id', '@type', '@value', '@language')));
+      self::addValue(
+        $rval, $expanded_property, $expanded_value,
+        array('propertyIsArray' => $use_array));
     }
 
-    // drop top-level scalars that are not in lists
-    if(!$inside_list &&
-      ($active_property === null ||
-      $this->_expandIri($active_ctx, $active_property,
-        array('vocab' => true)) === '@graph')) {
-      return null;
+    // get property count on expanded output
+    $keys = array_keys((array)$rval);
+    $count = count($keys);
+
+    // @value must only have @language or @type
+    if(property_exists($rval, '@value')) {
+      // @value must only have @language or @type
+      if(property_exists($rval, '@type') &&
+        property_exists($rval, '@language')) {
+        throw new JsonLdException(
+          'Invalid JSON-LD syntax; an element containing "@value" may not ' .
+          'contain both "@type" and "@language".',
+          'jsonld.SyntaxError', array('element' => $rval));
+      }
+      $valid_count = $count - 1;
+      if(property_exists($rval, '@type')) {
+        $valid_count -= 1;
+      }
+      if(property_exists($rval, '@index')) {
+        $valid_count -= 1;
+      }
+      if(property_exists($rval, '@language')) {
+        $valid_count -= 1;
+      }
+      if($valid_count !== 0) {
+        throw new JsonLdException(
+          'Invalid JSON-LD syntax; an element containing "@value" may only ' .
+          'have an "@index" property and at most one other property ' .
+          'which can be "@type" or "@language".',
+          'jsonld.SyntaxError', array('element' => $rval));
+      }
+      // drop null @values
+      if($rval->{'@value'} === null) {
+        $rval = null;
+      }
+      // drop @language if @value isn't a string
+      else if(property_exists($rval, '@language') &&
+        !is_string($rval->{'@value'})) {
+        unset($rval->{'@language'});
+      }
+    }
+    // convert @type to an array
+    else if(property_exists($rval, '@type') && !is_array($rval->{'@type'})) {
+      $rval->{'@type'} = array($rval->{'@type'});
+    }
+    // handle @set and @list
+    else if(property_exists($rval, '@set') ||
+      property_exists($rval, '@list')) {
+      if($count > 1 && ($count !== 2 && property_exists($rval, '@index'))) {
+        throw new JsonLdException(
+          'Invalid JSON-LD syntax; if an element has the property "@set" ' .
+          'or "@list", then it can have at most one other property that is ' .
+          '"@index".',
+          'jsonld.SyntaxError', array('element' => $rval));
+      }
+      // optimize away @set
+      if(property_exists($rval, '@set')) {
+        $rval = $rval->{'@set'};
+        $keys = array_keys((array)$rval);
+        $count = count($keys);
+      }
+    }
+    // drop objects with only @language
+    else if($count === 1 && property_exists($rval, '@language')) {
+      $rval = null;
     }
 
-    // expand element according to value expansion rules
-    return $this->_expandValue($active_ctx, $active_property, $element);
+    // drop certain top-level objects that do not occur in lists
+    if(is_object($rval) &&
+      !$options['keepFreeFloatingNodes'] && !$inside_list &&
+      ($active_property === null || $expanded_active_property === '@graph')) {
+      // drop empty object or top-level @value
+      if($count === 0 || property_exists($rval, '@value')) {
+        $rval = null;
+      }
+      else {
+        // drop subjects that generate no triples
+        $has_triples = false;
+        $ignore = array('@graph', '@type');
+        foreach($keys as $key) {
+          if(!self::_isKeyword($key) || in_array($key, $ignore)) {
+            $has_triples = true;
+            break;
+          }
+        }
+        if(!$has_triples) {
+          $rval = null;
+        }
+      }
+    }
+
+    return $rval;
   }
 
   /**
