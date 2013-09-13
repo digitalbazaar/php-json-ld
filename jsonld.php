@@ -1,7 +1,7 @@
 <?php
 /**
  * PHP implementation of the JSON-LD API.
- * Version: 0.1.0
+ * Version: 0.2.0
  *
  * @author Dave Longley
  *
@@ -159,6 +159,58 @@ function jsonld_from_rdf($input, $options=array()) {
 function jsonld_to_rdf($input, $options=array()) {
   $p = new JsonLdProcessor();
   return $p->toRDF($input, $options);
+}
+
+/**
+ * Parses a link header. The results will be key'd by the value of "rel".
+ *
+ * Link: <http://json-ld.org/contexts/person.jsonld>; rel="http://www.w3.org/ns/json-ld#context"; type="application/ld+json"
+ *
+ * Parses as: {
+ *   'http://www.w3.org/ns/json-ld#context': {
+ *     target: http://json-ld.org/contexts/person.jsonld,
+ *     type: 'application/ld+json'
+ *   }
+ * }
+ *
+ * If there is more than one "rel" with the same IRI, then entries in the
+ * resulting map for that "rel" will be arrays.
+ *
+ * @param string $header the link header to parse.
+ *
+ * @return assoc the parsed result.
+ */
+function jsonld_parse_link_header($header) {
+  $rval = array();
+  // split on unbracketed/unquoted commas
+  if(!preg_match_all('/(?:<[^>]*?>|"[^"]*?"|[^,])+/', $header, $entries)) {
+    return $rval;
+  }
+  $r_link_header = '/\s*<([^>]*?)>\s*(?:;\s*(.*))?/';
+  foreach($entries as $entry) {
+    $match = preg_match($r_link_header, $entry[0]);
+    if(!$match) {
+      continue;
+    }
+    $result = array('target' => $match[1]);
+    $params = $match[2];
+    $r_params = '/(.*?)=(?:(?:"([^"]*?)")|([^"]*?))\s*(?:(?:;\s*)|$)/';
+    $matches = preg_match_all($r_params, $params);
+    foreach($matches as $match) {
+      $result[$match[1]] = $match[2] ?: $match[3];
+    }
+    $rel = $result['rel'] ?: '';
+    if(!isset($rval, $rel)) {
+      $rval[$rel] = $result;
+    }
+    else if(is_array($rval, $rel)) {
+      $rval[$rel][] = $result;
+    }
+    else {
+      $rval[$rel] = array($rval[$rel], $result);
+    }
+  }
+  return $rval;
 }
 
 /**
@@ -5355,11 +5407,10 @@ jsonld_register_rdf_parser(
  * A JSON-LD Exception.
  */
 class JsonLdException extends Exception {
-  protected $type;
-  protected $details;
-  protected $cause;
-  public function __construct($msg, $type, $details=null, $previous=null) {
+  public function __construct(
+    $msg, $type, /*$code='error',*/ $details=null, $previous=null) {
     $this->type = $type;
+    //$this->code = $code;
     $this->details = $details;
     $this->cause = $previous;
     parent::__construct($msg, 0, $previous);
