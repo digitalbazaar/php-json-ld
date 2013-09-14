@@ -839,7 +839,7 @@ class JsonLdProcessor {
 
     // if input is a string, attempt to dereference remote document
     if(is_string($input)) {
-      $remote_doc = $options['documentLoader']($input);
+      $remote_doc = call_user_func($options['documentLoader'], $input);
     }
     else {
       $remote_doc = (object)array(
@@ -848,9 +848,26 @@ class JsonLdProcessor {
         'document' => $input);
     }
 
+    try {
+      if($remote_doc->document === null) {
+        throw new JsonLdException(
+          'No remote document found at the given URL.',
+          'jsonld.NullRemoteDocument');
+      }
+      if(is_string($remote_doc->document)) {
+        $remote_doc->document = _parse_json($remote_doc->document);
+      }
+    }
+    catch(Exception $e) {
+      throw new JsonLdException(
+        'Could not retrieve a JSON-LD document from the URL.',
+        'jsonld.LoadDocumentError', 'loading document failed',
+        array('remoteDoc' => $remote_doc), $e);
+    }
+
     // build meta-object and retrieve all @context urls
     $input = (object)array(
-      'document' => self::copy($input),
+      'document' => self::copy($remote_doc->document),
       'remoteContext' => (object)array(
         '@context' => $remote_doc->contextUrl));
     if(isset($options['expandContext'])) {
@@ -981,13 +998,30 @@ class JsonLdProcessor {
 
     // if frame is a string, attempt to dereference remote document
     if(is_string($frame)) {
-      $remote_frame = $options['documentLoader']($frame);
+      $remote_frame = call_user_func($options['documentLoader'], $frame);
     }
     else {
       $remote_frame = (object)array(
         'contextUrl' => null,
         'documentUrl' => null,
         'document' => $frame);
+    }
+
+    try {
+      if($remote_frame->document === null) {
+        throw new JsonLdException(
+          'No remote document found at the given URL.',
+          'jsonld.NullRemoteDocument');
+      }
+      if(is_string($remote_frame->document)) {
+        $remote_frame->document = _parse_json($remote_frame->document);
+      }
+    }
+    catch(Exception $e) {
+      throw new JsonLdException(
+        'Could not retrieve a JSON-LD document from the URL.',
+        'jsonld.LoadDocumentError', 'loading document failed',
+        array('remoteDoc' => $remote_doc), $e);
     }
 
     // preserve frame context
@@ -5056,36 +5090,14 @@ class JsonLdProcessor {
 
       // parse string context as JSON
       if(is_string($ctx)) {
-        $ctx = json_decode($ctx);
-        switch(json_last_error()) {
-          case JSON_ERROR_NONE:
-            break;
-          case JSON_ERROR_DEPTH:
-            throw new JsonLdException(
-              'Could not parse JSON from URL; the maximum stack depth has ' .
-              'been exceeded.', 'jsonld.ParseError', 'invalid remote context',
-              array('url' => $url));
-          case JSON_ERROR_STATE_MISMATCH:
-            throw new JsonLdException(
-              'Could not parse JSON from URL; invalid or malformed JSON.',
-              'jsonld.ParseError', 'invalid remote context',
-              array('url' => $url));
-          case JSON_ERROR_CTRL_CHAR:
-          case JSON_ERROR_SYNTAX:
-            throw new JsonLdException(
-              'Could not parse JSON from URL; syntax error, malformed JSON.',
-              'jsonld.ParseError', 'invalid remote context',
-              array('url' => $url));
-          case JSON_ERROR_UTF8:
-            throw new JsonLdException(
-              'Could not parse JSON from URL; malformed UTF-8 characters.',
-              'jsonld.ParseError', 'invalid remote context',
-              array('url' => $url));
-          default:
-            throw new JsonLdException(
-              'Could not parse JSON from URL; unknown error.',
-              'jsonld.ParseError', 'invalid remote context',
-              array('url' => $url));
+        try {
+          $ctx = _parse_json($ctx);
+        }
+        catch(Exception $e) {
+          throw new JsonLdException(
+            'Could not parse JSON from URL.',
+            'jsonld.ParseError', 'invalid remote context',
+            array('url' => $url), $e);
         }
       }
 
@@ -5477,6 +5489,43 @@ class JsonLdProcessor {
       return property_exists($o2, $key) && $o1->{$key} === $o2->{$key};
     }
     return !property_exists($o2, $key);
+  }
+
+  /**
+   * Parses JSON and sets an appropriate exception message on error.
+   *
+   * @param string $json the JSON to parse.
+   *
+   * @return mixed the parsed JSON object or array.
+   */
+  protected static function _parse_json($json) {
+    $rval = json_decode($json);
+    switch(json_last_error()) {
+    case JSON_ERROR_NONE:
+      break;
+    case JSON_ERROR_DEPTH:
+      throw new JsonLdException(
+        'Could not parse JSON; the maximum stack depth has been exceeded.',
+        'jsonld.ParseError');
+    case JSON_ERROR_STATE_MISMATCH:
+      throw new JsonLdException(
+        'Could not parse JSON; invalid or malformed JSON.',
+        'jsonld.ParseError');
+    case JSON_ERROR_CTRL_CHAR:
+    case JSON_ERROR_SYNTAX:
+      throw new JsonLdException(
+        'Could not parse JSON; syntax error, malformed JSON.',
+        'jsonld.ParseError');
+    case JSON_ERROR_UTF8:
+      throw new JsonLdException(
+        'Could not parse JSON from URL; malformed UTF-8 characters.',
+        'jsonld.ParseError');
+    default:
+      throw new JsonLdException(
+        'Could not parse JSON from URL; unknown error.',
+        'jsonld.ParseError');
+    }
+    return $rval;
   }
 }
 
