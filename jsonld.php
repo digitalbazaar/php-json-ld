@@ -4621,8 +4621,8 @@ class JsonLdProcessor {
       // cycle detected
       throw new JsonLdException(
         'Cyclical context definition detected.',
-        'jsonld.CyclicalContext',
-        (object)array('context' => $local_ctx, 'term' => $term));
+        'jsonld.CyclicalContext', 'cyclic IRI mapping',
+        array('context' => $local_ctx, 'term' => $term));
     }
 
     // now defining term
@@ -4631,7 +4631,8 @@ class JsonLdProcessor {
     if(self::_isKeyword($term)) {
       throw new JsonLdException(
         'Invalid JSON-LD syntax; keywords cannot be overridden.',
-        'jsonld.SyntaxError', array('context' => $local_ctx));
+        'jsonld.SyntaxError', 'keyword definition',
+        array('context' => $local_ctx));
     }
 
     // remove old mapping
@@ -4658,8 +4659,8 @@ class JsonLdProcessor {
     if(!is_object($value)) {
       throw new JsonLdException(
         'Invalid JSON-LD syntax; @context property values must be ' .
-        'strings or objects.',
-        'jsonld.SyntaxError', array('context' => $local_ctx));
+        'strings or objects.', 'jsonld.SyntaxError', 'invalid term definition',
+        array('context' => $local_ctx));
     }
 
     // create new mapping
@@ -4670,20 +4671,29 @@ class JsonLdProcessor {
       if(property_exists($value, '@id')) {
         throw new JsonLdException(
           'Invalid JSON-LD syntax; a @reverse term definition must not ' +
-          'contain @id.',
-          'jsonld.SyntaxError', array('context' => $local_ctx));
+          'contain @id.', 'jsonld.SyntaxError', 'invalid reverse property',
+          array('context' => $local_ctx));
       }
       $reverse = $value->{'@reverse'};
       if(!is_string($reverse)) {
         throw new JsonLdException(
           'Invalid JSON-LD syntax; a @context @reverse value must be a string.',
-          'jsonld.SyntaxError', array('context' => $local_ctx));
+          'jsonld.SyntaxError', 'invalid IRI mapping',
+          array('context' => $local_ctx));
       }
 
       // expand and add @id mapping
-      $mapping->{'@id'} = $this->_expandIri(
+      $id = $this->_expandIri(
         $active_ctx, $reverse, array('vocab' => true, 'base' => false),
         $local_ctx, $defined);
+      if(!self::_isAbsoluteIri($id)) {
+        throw new JsonLdException(
+          'Invalid JSON-LD syntax; @context @reverse value must be ' .
+          'an absolute IRI or a blank node identifier.',
+          'jsonld.SyntaxError', 'invalid IRI mapping',
+          array('context' => $local_ctx));
+      }
+      $mapping->{'@id'} = $id;
       $mapping->reverse = true;
     }
     else if(property_exists($value, '@id')) {
@@ -4691,13 +4701,22 @@ class JsonLdProcessor {
       if(!is_string($id)) {
         throw new JsonLdException(
           'Invalid JSON-LD syntax; @context @id value must be a string.',
-          'jsonld.SyntaxError', array('context' => $local_ctx));
+          'jsonld.SyntaxError', 'invalid IRI mapping',
+          array('context' => $local_ctx));
       }
       if($id !== $term) {
         // add @id to mapping
-        $mapping->{'@id'} = $this->_expandIri(
+        $id = $this->_expandIri(
           $active_ctx, $id, array('vocab' => true, 'base' => false),
           $local_ctx, $defined);
+        if(!self::_isAbsoluteIri($id) && !self::_isKeyword($id)) {
+          throw new JsonLdException(
+            'Invalid JSON-LD syntax; @context @id value must be an ' .
+            'absolute IRI, a blank node identifier, or a keyword.',
+            'jsonld.SyntaxError', 'invalid IRI mapping',
+            array('context' => $local_ctx))
+        }
+        $mapping->{'@id'} = $id;
       }
     }
 
@@ -4729,7 +4748,7 @@ class JsonLdProcessor {
         if(!property_exists($active_ctx, '@vocab')) {
           throw new JsonLdException(
             'Invalid JSON-LD syntax; @context terms must define an @id.',
-            'jsonld.SyntaxError',
+            'jsonld.SyntaxError', 'invalid IRI mapping',
             array('context' => $local_ctx, 'term' => $term));
         }
         // prepend vocab to term
@@ -4745,14 +4764,28 @@ class JsonLdProcessor {
       if(!is_string($type)) {
         throw new JsonLdException(
           'Invalid JSON-LD syntax; @context @type values must be strings.',
-          'jsonld.SyntaxError', array('context' => $local_ctx));
+          'jsonld.SyntaxError', 'invalid type mapping',
+          array('context' => $local_ctx));
       }
 
-      if($type !== '@id') {
+      if($type !== '@id' && $type !== '@vocab') {
         // expand @type to full IRI
         $type = $this->_expandIri(
           $active_ctx, $type, array('vocab' => true, 'base' => true),
           $local_ctx, $defined);
+        if(!self::_isAbsoluteIri($type)) {
+          throw new JsonLdException(
+            'Invalid JSON-LD syntax; an @context @type value must ' .
+            'be an absolute IRI.', 'jsonld.SyntaxError',
+            'invalid type mapping', array('context' => $local_ctx));
+        }
+        if(strpos($type, '_:') === 0) {
+          throw new JsonLdException(
+            'Invalid JSON-LD syntax; an @context @type values must ' .
+            'be an IRI, not a blank node identifier.',
+            'jsonld.SyntaxError', 'invalid type mapping',
+            array('context' => $local_ctx));
+        }
       }
 
       // add @type to mapping
@@ -4766,14 +4799,16 @@ class JsonLdProcessor {
         throw new JsonLdException(
           'Invalid JSON-LD syntax; @context @container value must be ' .
           'one of the following: @list, @set, @index, or @language.',
-          'jsonld.SyntaxError', array('context' => $local_ctx));
+          'jsonld.SyntaxError', 'invalid container mapping',
+          array('context' => $local_ctx));
       }
       if($mapping->reverse && $container !== '@index' &&
         $container !== '@set' && $container !== null) {
         throw new JsonLdException(
           'Invalid JSON-LD syntax; @context @container value for a @reverse ' +
           'type definition must be @index or @set.',
-          'jsonld.SyntaxError', array('context' => $local_ctx));
+          'jsonld.SyntaxError', 'invalid reverse property',
+          array('context' => $local_ctx));
       }
 
       // add @container to mapping
@@ -4786,8 +4821,8 @@ class JsonLdProcessor {
       if($language !== null && !is_string($language)) {
         throw new JsonLdException(
           'Invalid JSON-LD syntax; @context @language value must be ' .
-          'a string or null.',
-          'jsonld.SyntaxError', array('context' => $local_ctx));
+          'a string or null.', 'jsonld.SyntaxError',
+          'invalid language mapping', array('context' => $local_ctx));
       }
 
       // add @language to mapping
@@ -4802,7 +4837,8 @@ class JsonLdProcessor {
     if($id === '@context' || $id === '@preserve') {
       throw new JsonLdException(
         'Invalid JSON-LD syntax; @context and @preserve cannot be aliased.',
-        'jsonld.SyntaxError', array('context' => $local_ctx));
+        'jsonld.SyntaxError', 'invalid keyword alias',
+        array('context' => $local_ctx));
     }
   }
 
@@ -4890,17 +4926,6 @@ class JsonLdProcessor {
     $rval = $value;
     if(isset($relative_to['base']) && $relative_to['base']) {
       $rval = jsonld_prepend_base($active_ctx->{'@base'}, $rval);
-    }
-
-    if($local_ctx) {
-      // value must now be an absolute IRI
-      if(!self::_isAbsoluteIri($rval)) {
-        throw new JsonLdException(
-          'Invalid JSON-LD syntax; a @context value does not expand to ' .
-          'an absolute IRI.',
-          'jsonld.SyntaxError',
-          array('context' => $local_ctx, 'value' => $value));
-      }
     }
 
     return $rval;
