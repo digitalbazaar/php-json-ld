@@ -4714,7 +4714,7 @@ class JsonLdProcessor {
             'Invalid JSON-LD syntax; @context @id value must be an ' .
             'absolute IRI, a blank node identifier, or a keyword.',
             'jsonld.SyntaxError', 'invalid IRI mapping',
-            array('context' => $local_ctx))
+            array('context' => $local_ctx));
         }
         $mapping->{'@id'} = $id;
       }
