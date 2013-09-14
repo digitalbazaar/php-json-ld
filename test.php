@@ -16,7 +16,7 @@ class JsonLdTestCase extends PHPUnit_Framework_TestCase {
     global $EARL, $OPTIONS;
     if(isset($OPTIONS['-e'])) {
       $filename = $OPTIONS['-e'];
-      echo "Writing EARL report to: $filename\n";
+      printf("\nWriting EARL report to: %s\n", $filename);
       $EARL->write($filename);
     }
   }
@@ -43,7 +43,7 @@ class JsonLdTestCase extends PHPUnit_Framework_TestCase {
    */
   public function testExpand($test) {
     $this->test = $test;
-    $input = $test->readProperty('input');
+    $input = $test->readUrl('input');
     $options = $test->createOptions();
     $test->run('jsonld_expand', array($input, $options));
   }
@@ -58,7 +58,7 @@ class JsonLdTestCase extends PHPUnit_Framework_TestCase {
    */
   public function testCompact($test) {
     $this->test = $test;
-    $input = $test->readProperty('input');
+    $input = $test->readUrl('input');
     $context = $test->readProperty('context');
     $options = $test->createOptions();
     $test->run('jsonld_compact', array($input, $context, $options));
@@ -74,7 +74,7 @@ class JsonLdTestCase extends PHPUnit_Framework_TestCase {
    */
   public function testFlatten($test) {
     $this->test = $test;
-    $input = $test->readProperty('input');
+    $input = $test->readUrl('input');
     $context = $test->readProperty('context');
     $options = $test->createOptions();
     $test->run('jsonld_flatten', array($input, $context, $options));
@@ -90,7 +90,7 @@ class JsonLdTestCase extends PHPUnit_Framework_TestCase {
    */
   public function testToRdf($test) {
     $this->test = $test;
-    $input = $test->readProperty('input');
+    $input = $test->readUrl('input');
     $options = $test->createOptions(array('format' => 'application/nquads'));
     $test->run('jsonld_to_rdf', array($input, $options));
   }
@@ -105,7 +105,7 @@ class JsonLdTestCase extends PHPUnit_Framework_TestCase {
    */
   public function testFromRdf($test) {
     $this->test = $test;
-    $input = $test->readProperty('input');
+    $input = $test->readUrl('input');
     $options = $test->createOptions(array('format' => 'application/nquads'));
     $test->run('jsonld_from_rdf', array($input, $options));
   }
@@ -120,7 +120,7 @@ class JsonLdTestCase extends PHPUnit_Framework_TestCase {
    */
   public function testFrame($test) {
     $this->test = $test;
-    $input = $test->readProperty('input');
+    $input = $test->readUrl('input');
     $frame = $test->readProperty('frame');
     $options = $test->createOptions();
     $test->run('jsonld_frame', array($input, $frame, $options));
@@ -137,7 +137,7 @@ class JsonLdTestCase extends PHPUnit_Framework_TestCase {
    */
   public function testNormalize($test) {
     $this->test = $test;
-    $input = $test->readProperty('input');
+    $input = $test->readUrl('input');
     $options = $test->createOptions(array('format' => 'application/nquads'));
     $test->run('jsonld_compact', array($input, $options));
   }
@@ -255,6 +255,13 @@ class JsonLdTest {
     }
   }
 
+  public function readUrl($property) {
+    if(!property_exists($this->data, $property)) {
+      return null;
+    }
+    return $this->manifest->data->baseIri . $this->data->{$property};
+  }
+
   public function readProperty($property) {
     $data = $this->data;
     if(!property_exists($data, $property)) {
@@ -325,7 +332,7 @@ class JsonLdTest {
             if(is_array($link_header)) {
               throw new Exception('multiple context link headers');
             }
-            $doc->{'contextUrl'} = $link_header['target'];
+            $doc->{'contextUrl'} = $link_header->target;
           }
         }
       }
