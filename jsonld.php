@@ -300,7 +300,9 @@ function jsonld_default_document_loader($url) {
     }));
   $result = @file_get_contents($url, false, $stream);
   if($result === false) {
-    throw new Exception("Could not GET url: '$url'");
+    throw new JsonLdException(
+      'Could not retrieve a JSON-LD document from the URL.',
+      'jsonld.LoadDocumentError', 'loading document failed');
   }
   $redirs = count($redirects);
   if($redirs > 0) {
@@ -702,7 +704,7 @@ class JsonLdProcessor {
     if($ctx === null) {
       throw new JsonLdException(
         'The compaction context must not be null.',
-        'jsonld.CompactError');
+        'jsonld.CompactError', 'invalid local context');
     }
 
     // nothing to compact
@@ -729,7 +731,7 @@ class JsonLdProcessor {
       catch(JsonLdException $e) {
         throw new JsonLdException(
           'Could not expand input before compaction.',
-          'jsonld.CompactError', null, $e);
+          'jsonld.CompactError', null, null, $e);
       }
     }
 
@@ -741,7 +743,7 @@ class JsonLdProcessor {
     catch(JsonLdException $e) {
       throw new JsonLdException(
         'Could not process context before compaction.',
-        'jsonld.CompactError', null, $e);
+        'jsonld.CompactError', null, null, $e);
     }
 
     // do compaction
@@ -870,7 +872,7 @@ class JsonLdProcessor {
     catch(Exception $e) {
       throw new JsonLdException(
         'Could not perform JSON-LD expansion.',
-        'jsonld.ExpandError', null, $e);
+        'jsonld.ExpandError', null, null, $e);
     }
 
     $active_ctx = $this->_getInitialContext($options);
@@ -928,7 +930,7 @@ class JsonLdProcessor {
     catch(Exception $e) {
       throw new JsonLdException(
         'Could not expand input before flattening.',
-        'jsonld.FlattenError', null, $e);
+        'jsonld.FlattenError', null, null, $e);
     }
 
     // do flattening
@@ -947,7 +949,7 @@ class JsonLdProcessor {
     catch(Exception $e) {
       throw new JsonLdException(
         'Could not compact flattened output.',
-        'jsonld.FlattenError', null, $e);
+        'jsonld.FlattenError', null, null, $e);
     }
 
     return $compacted;
@@ -1012,7 +1014,7 @@ class JsonLdProcessor {
     catch(Exception $e) {
       throw new JsonLdException(
         'Could not expand input before framing.',
-        'jsonld.FrameError', null, $e);
+        'jsonld.FrameError', null, null, $e);
     }
 
     try {
@@ -1024,7 +1026,7 @@ class JsonLdProcessor {
     catch(Exception $e) {
       throw new JsonLdException(
         'Could not expand frame before framing.',
-        'jsonld.FrameError', null, $e);
+        'jsonld.FrameError', null, null, $e);
     }
 
     // do framing
@@ -1040,7 +1042,7 @@ class JsonLdProcessor {
     catch(Exception $e) {
       throw new JsonLdException(
         'Could not compact framed output.',
-        'jsonld.FrameError', null, $e);
+        'jsonld.FrameError', null, null, $e);
     }
 
     $compacted = $result['compacted'];
@@ -1084,7 +1086,7 @@ class JsonLdProcessor {
     catch(Exception $e) {
       throw new JsonLdException(
         'Could not convert input to RDF dataset before normalization.',
-        'jsonld.NormalizeError', null, $e);
+        'jsonld.NormalizeError', null, null, $e);
     }
 
     // do normalization
@@ -1127,7 +1129,7 @@ class JsonLdProcessor {
         !property_exists($jsonld_rdf_parsers, $options['format'])) {
         throw new JsonLdException(
           'Unknown input format.',
-          'jsonld.UnknownFormat', array('format' => $options['format']));
+          'jsonld.UnknownFormat', null, array('format' => $options['format']));
       }
       if($this->rdfParsers !== null) {
         $callable = $this->rdfParsers->{$options['format']};
@@ -1170,7 +1172,7 @@ class JsonLdProcessor {
     catch(JsonLdException $e) {
       throw new JsonLdException(
         'Could not expand input before serialization to RDF.',
-        'jsonld.RdfError', $e);
+        'jsonld.RdfError', null, null, $e);
     }
 
     // create node map for default graph (and any named graphs)
@@ -1200,8 +1202,8 @@ class JsonLdProcessor {
       }
       else {
         throw new JsonLdException(
-          'Unknown output format.',
-          'jsonld.UnknownFormat', array('format' => $options['format']));
+          'Unknown output format.', 'jsonld.UnknownFormat',
+          null, array('format' => $options['format']));
       }
     }
 
@@ -1243,7 +1245,7 @@ class JsonLdProcessor {
     catch(Exception $e) {
       throw new JsonLdException(
         'Could not process JSON-LD context.',
-        'jsonld.ContextError', null, $e);
+        'jsonld.ContextError', null, null, $e);
     }
 
     // process context
@@ -1541,7 +1543,7 @@ class JsonLdProcessor {
       if(!preg_match($quad, $line, $match)) {
         throw new JsonLdException(
           'Error while parsing N-Quads; invalid quad.',
-          'jsonld.ParseError', array('line' => $line_number));
+          'jsonld.ParseError', null, array('line' => $line_number));
       }
 
       // create RDF triple
@@ -2005,8 +2007,8 @@ class JsonLdProcessor {
                 'JSON-LD compact error; property has a "@list" @container ' .
                 'rule but there is more than a single @list that matches ' .
                 'the compacted term in the document. Compaction might mix ' .
-                'unwanted items into the list.',
-                'jsonld.SyntaxError');
+                'unwanted items into the list.', 'jsonld.SyntaxError',
+                'compaction to list of lists');
             }
           }
 
@@ -2704,7 +2706,7 @@ class JsonLdProcessor {
       }
       throw new JsonLdException(
         'Unknown output format.',
-        'jsonld.UnknownFormat', array('format' => $options['format']));
+        'jsonld.UnknownFormat', null, array('format' => $options['format']));
     }
 
     // return RDF dataset
@@ -2918,7 +2920,8 @@ class JsonLdProcessor {
       if(!is_object($ctx)) {
         throw new JsonLdException(
           'Invalid JSON-LD syntax; @context must be an object.',
-          'jsonld.SyntaxError', array('context' => $ctx));
+          'jsonld.SyntaxError', 'invalid local context',
+          array('context' => $ctx));
       }
 
       // get context from cache if available
@@ -2950,13 +2953,13 @@ class JsonLdProcessor {
           throw new JsonLdException(
             'Invalid JSON-LD syntax; the value of "@base" in a ' .
             '@context must be a string or null.',
-            'jsonld.SyntaxError', array('context' => $ctx));
+            'jsonld.SyntaxError', 'invalid base IRI', array('context' => $ctx));
         }
         else if($base !== '' && !self::_isAbsoluteIri($base)) {
           throw new JsonLdException(
             'Invalid JSON-LD syntax; the value of "@base" in a ' .
             '@context must be an absolute IRI or the empty string.',
-            'jsonld.SyntaxError', array('context' => $ctx));
+            'jsonld.SyntaxError', 'invalid base IRI', array('context' => $ctx));
         }
         $rval->{'@base'} = jsonld_parse_url($base);
         $defined->{'@base'} = true;
@@ -2972,13 +2975,15 @@ class JsonLdProcessor {
           throw new JsonLdException(
             'Invalid JSON-LD syntax; the value of "@vocab" in a ' .
             '@context must be a string or null.',
-            'jsonld.SyntaxError', array('context' => $ctx));
+            'jsonld.SyntaxError', 'invalid vocab mapping',
+            array('context' => $ctx));
         }
         else if(!self::_isAbsoluteIri($value)) {
           throw new JsonLdException(
             'Invalid JSON-LD syntax; the value of "@vocab" in a ' .
             '@context must be an absolute IRI.',
-            'jsonld.SyntaxError', array('context' => $ctx));
+            'jsonld.SyntaxError', 'invalid vocab mapping',
+            array('context' => $ctx));
         }
         else {
           $rval->{'@vocab'} = $value;
@@ -2996,7 +3001,8 @@ class JsonLdProcessor {
           throw new JsonLdException(
             'Invalid JSON-LD syntax; the value of "@language" in a ' .
             '@context must be a string or null.',
-            'jsonld.SyntaxError', array('context' => $ctx));
+            'jsonld.SyntaxError', 'invalid default language',
+            array('context' => $ctx));
         }
         else {
           $rval->{'@language'} = strtolower($value);
@@ -3036,7 +3042,8 @@ class JsonLdProcessor {
         if(!is_string($item)) {
           throw new JsonLdException(
             'Invalid JSON-LD syntax; language map values must be strings.',
-            'jsonld.SyntaxError', array('languageMap', $language_map));
+            'jsonld.SyntaxError', 'invalid language map value',
+            array('languageMap', $language_map));
         }
         $rval[] = (object)array(
           '@value' => $item,
@@ -3505,7 +3512,8 @@ class JsonLdProcessor {
         if($property === '@index' && property_exists($subject, '@index')) {
           throw new JsonLdException(
             'Invalid JSON-LD syntax; conflicting @index property detected.',
-            'jsonld.SyntaxError', array('subject' => $subject));
+            'jsonld.SyntaxError', 'conflicting indexes',
+            array('subject' => $subject));
         }
         $subject->{$property} = $input->{$property};
         continue;
@@ -3755,7 +3763,7 @@ class JsonLdProcessor {
     if(!is_array($frame) || count($frame) !== 1 || !is_object($frame[0])) {
       throw new JsonLdException(
         'Invalid JSON-LD syntax; a JSON-LD frame must be a single object.',
-        'jsonld.SyntaxError', array('frame' => $frame));
+        'jsonld.SyntaxError', null, array('frame' => $frame));
     }
   }
 
@@ -5012,7 +5020,8 @@ class JsonLdProcessor {
     if(count(get_object_vars($cycles)) > self::MAX_CONTEXT_URLS) {
       throw new JsonLdException(
         'Maximum number of @context URLs exceeded.',
-        'jsonld.ContextUrlError', array('max' => self::MAX_CONTEXT_URLS));
+        'jsonld.ContextUrlError', 'loading remote context failed',
+        array('max' => self::MAX_CONTEXT_URLS));
     }
 
     // for tracking the URLs to retrieve
@@ -5035,7 +5044,8 @@ class JsonLdProcessor {
       if(property_exists($cycles, $url)) {
         throw new JsonLdException(
           'Cyclical @context URLs detected.',
-          'jsonld.ContextUrlError', array('url' => $url));
+          'jsonld.ContextUrlError', 'recursive context inclusion',
+          array('url' => $url));
       }
       $_cycles = self::copy($cycles);
       $_cycles->{$url} = true;
@@ -5052,25 +5062,30 @@ class JsonLdProcessor {
             break;
           case JSON_ERROR_DEPTH:
             throw new JsonLdException(
-            'Could not parse JSON from URL; the maximum stack depth has ' .
-            'been exceeded.', 'jsonld.ParseError', array('url' => $url));
+              'Could not parse JSON from URL; the maximum stack depth has ' .
+              'been exceeded.', 'jsonld.ParseError', 'invalid remote context',
+              array('url' => $url));
           case JSON_ERROR_STATE_MISMATCH:
             throw new JsonLdException(
-            'Could not parse JSON from URL; invalid or malformed JSON.',
-            'jsonld.ParseError', array('url' => $url));
+              'Could not parse JSON from URL; invalid or malformed JSON.',
+              'jsonld.ParseError', 'invalid remote context',
+              array('url' => $url));
           case JSON_ERROR_CTRL_CHAR:
           case JSON_ERROR_SYNTAX:
             throw new JsonLdException(
-            'Could not parse JSON from URL; syntax error, malformed JSON.',
-            'jsonld.ParseError', array('url' => $url));
+              'Could not parse JSON from URL; syntax error, malformed JSON.',
+              'jsonld.ParseError', 'invalid remote context',
+              array('url' => $url));
           case JSON_ERROR_UTF8:
             throw new JsonLdException(
-            'Could not parse JSON from URL; malformed UTF-8 characters.',
-            'jsonld.ParseError', array('url' => $url));
+              'Could not parse JSON from URL; malformed UTF-8 characters.',
+              'jsonld.ParseError', 'invalid remote context',
+              array('url' => $url));
           default:
             throw new JsonLdException(
-            'Could not parse JSON from URL; unknown error.',
-            'jsonld.ParseError', array('url' => $url));
+              'Could not parse JSON from URL; unknown error.',
+              'jsonld.ParseError', 'invalid remote context',
+              array('url' => $url));
         }
       }
 
@@ -5078,7 +5093,7 @@ class JsonLdProcessor {
       if(!is_object($ctx)) {
         throw new JsonLdException(
           'Derefencing a URL did not result in a valid JSON-LD object.',
-          'jsonld.InvalidUrl', array('url' => $url));
+          'jsonld.InvalidUrl', 'invalid remote context', array('url' => $url));
       }
 
       // use empty context if no @context key is present
@@ -5324,7 +5339,7 @@ class JsonLdProcessor {
       throw new JsonLdException(
         'Invalid JSON-LD syntax; "@type" value must a string, an array ' .
         'of strings, or an empty object.',
-        'jsonld.SyntaxError', array('value' => $v));
+        'jsonld.SyntaxError', 'invalid type value', array('value' => $v));
     }
   }
 
