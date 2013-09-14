@@ -174,7 +174,8 @@ function jsonld_to_rdf($input, $options=array()) {
  * }
  *
  * If there is more than one "rel" with the same IRI, then entries in the
- * resulting map for that "rel" will be arrays.
+ * resulting map for that "rel" will be arrays of objects, otherwise they will
+ * be single objects.
  *
  * @param string $header the link header to parse.
  *
@@ -183,27 +184,27 @@ function jsonld_to_rdf($input, $options=array()) {
 function jsonld_parse_link_header($header) {
   $rval = array();
   // split on unbracketed/unquoted commas
-  if(!preg_match_all('/(?:<[^>]*?>|"[^"]*?"|[^,])+/', $header, $entries)) {
+  if(!preg_match_all(
+    '/(?:<[^>]*?>|"[^"]*?"|[^,])+/', $header, $entries, PREG_SET_ORDER)) {
     return $rval;
   }
   $r_link_header = '/\s*<([^>]*?)>\s*(?:;\s*(.*))?/';
   foreach($entries as $entry) {
-    $match = preg_match($r_link_header, $entry[0]);
-    if(!$match) {
+    if(!preg_match($r_link_header, $entry[0], $match)) {
       continue;
     }
-    $result = array('target' => $match[1]);
+    $result = (object)array('target' => $match[1]);
     $params = $match[2];
     $r_params = '/(.*?)=(?:(?:"([^"]*?)")|([^"]*?))\s*(?:(?:;\s*)|$)/';
-    $matches = preg_match_all($r_params, $params);
+    preg_match_all($r_params, $params, $matches, PREG_SET_ORDER);
     foreach($matches as $match) {
-      $result[$match[1]] = $match[2] ?: $match[3];
+      $result->{$match[1]} = $match[2] ?: $match[3];
     }
-    $rel = $result['rel'] ?: '';
-    if(!isset($rval, $rel)) {
+    $rel = property_exists($result, 'rel') ? $result->rel : '';
+    if(!isset($rval[$rel])) {
       $rval[$rel] = $result;
     }
-    else if(is_array($rval, $rel)) {
+    else if(is_array($rval[$rel])) {
       $rval[$rel][] = $result;
     }
     else {
