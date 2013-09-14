@@ -2471,7 +2471,7 @@ class JsonLdProcessor {
     // handle @set and @list
     else if(property_exists($rval, '@set') ||
       property_exists($rval, '@list')) {
-      if($count > 1 && ($count !== 2 && property_exists($rval, '@index'))) {
+      if($count > 1 && !($count === 2 && property_exists($rval, '@index'))) {
         throw new JsonLdException(
           'Invalid JSON-LD syntax; if an element has the property "@set" ' .
           'or "@list", then it can have at most one other property that is ' .
@@ -4813,8 +4813,7 @@ class JsonLdProcessor {
       if($type !== '@id' && $type !== '@vocab') {
         // expand @type to full IRI
         $type = $this->_expandIri(
-          $active_ctx, $type, array('vocab' => true, 'base' => true),
-          $local_ctx, $defined);
+          $active_ctx, $type, array('vocab' => true), $local_ctx, $defined);
         if(!self::_isAbsoluteIri($type)) {
           throw new JsonLdException(
             'Invalid JSON-LD syntax; an @context @type value must ' .
