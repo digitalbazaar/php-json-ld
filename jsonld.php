@@ -833,7 +833,6 @@ class JsonLdProcessor {
    */
   public function expand($input, $options) {
     self::setdefaults($options, array(
-      'base' => is_string($input) ? $input : '',
       'keepFreeFloatingNodes' => false,
       'documentLoader' => 'jsonld_default_document_loader'));
 
@@ -864,6 +863,9 @@ class JsonLdProcessor {
         'jsonld.LoadDocumentError', 'loading document failed',
         array('remoteDoc' => $remote_doc), $e);
     }
+
+    // set default base
+    self::setdefault($options, 'base', $remote_doc->documentUrl ?: '');
 
     // build meta-object and retrieve all @context urls
     $input = (object)array(
