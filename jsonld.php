@@ -2207,7 +2207,7 @@ class JsonLdProcessor {
 
       // syntax error if @id is not a string
       if($expanded_property === '@id' && !is_string($value)) {
-        if(!isset($options['isFrame']) && !$options['isFrame']) {
+        if(!isset($options['isFrame']) || !$options['isFrame']) {
           throw new JsonLdException(
             'Invalid JSON-LD syntax; "@id" value must a string.',
             'jsonld.SyntaxError', 'invalid @id value',
