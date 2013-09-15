@@ -2458,8 +2458,8 @@ class JsonLdProcessor {
           array('element' => $rval));
       }
       else if(property_exists($rval, '@type') &&
-        !(self::_isAbsoluteIri($rval->{'@type'}) ||
-        strpos($rval->{'@type'}, '_:')) === 0) {
+        (!self::_isAbsoluteIri($rval->{'@type'}) ||
+        strpos($rval->{'@type'}, '_:') === 0)) {
         throw new JsonLdException(
           'Invalid JSON-LD syntax; an element containing "@value" ' .
           'and "@type" must have an absolute IRI for the value ' .
