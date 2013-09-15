@@ -158,7 +158,7 @@ class JsonLdTestCase extends PHPUnit_Framework_TestCase {
   }
 
   public function fromRdfProvider() {
-    return new JsonLdTestIterator('jld:fromRDFTest');
+    return new JsonLdTestIterator('jld:FromRDFTest');
   }
 
   public function normalizeProvider() {
