@@ -4676,7 +4676,7 @@ class JsonLdProcessor {
     if(self::_isKeyword($term)) {
       throw new JsonLdException(
         'Invalid JSON-LD syntax; keywords cannot be overridden.',
-        'jsonld.SyntaxError', 'keyword definition',
+        'jsonld.SyntaxError', 'keyword redefinition',
         array('context' => $local_ctx));
     }
 
