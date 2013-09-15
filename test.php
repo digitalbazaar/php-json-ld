@@ -222,7 +222,8 @@ class JsonLdTest {
       $data, '@type', 'jld:NegativeEvaluationTest');
 
     // generate test name
-    $this->name = $manifest->data->name . ' ' . substr($data->{'@id'}, 2);
+    $this->name = $manifest->data->name . ' ' . substr($data->{'@id'}, 2) .
+      ' - ' . $this->data->name;
 
     // expand @id and input base
     $data->{'@id'} = ($manifest->data->baseIri .
@@ -319,7 +320,7 @@ class JsonLdTest {
           $content_type = (property_exists($options, 'contentType') ?
             $options->contentType : null);
           $extension = pathinfo($url, PATHINFO_EXTENSION);
-          if(!$content_type && $extension === '.jsonld') {
+          if(!$content_type && $extension === 'jsonld') {
             $content_type = 'application/ld+json';
           }
           $link_header = $options->httpLink;
@@ -546,7 +547,9 @@ class EarlReport implements PHPUnit_Framework_TestListener {
     PHPUnit_Framework_AssertionFailedError $e, $time) {
     $this->addAssertion($test->test, false);
     if($this->result->shouldStop()) {
-      printf("\nFAILED Test: %s\n", $test->test->name);
+      printf("\n\nFAILED\n");
+      printf("Test: %s\n", $test->test->name);
+      printf("Purpose: %s\n", $test->test->data->purpose);
       printf("EXPECTED: %s\n", Util::jsonldEncode($test->test->expected));
       printf("ACTUAL: %s\n", Util::jsonldEncode($test->test->actual));
       exit(0);
@@ -559,10 +562,7 @@ class EarlReport implements PHPUnit_Framework_TestListener {
   }
 
   public function addSkippedTest(
-    PHPUnit_Framework_Test $test, Exception $e, $time) {
-    printf("Test '%s' has been skipped.\n", $test->test->data->{'@id'});
-  }
-
+    PHPUnit_Framework_Test $test, Exception $e, $time) {}
   public function startTest(PHPUnit_Framework_Test $test) {}
   public function startTestSuite(PHPUnit_Framework_TestSuite $suite) {}
   public function endTestSuite(PHPUnit_Framework_TestSuite $suite) {}
