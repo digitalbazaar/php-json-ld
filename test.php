@@ -93,7 +93,7 @@ class JsonLdTestCase extends PHPUnit_Framework_TestCase {
    */
   public function testFromRdf($test) {
     $this->test = $test;
-    $input = $test->readUrl('input');
+    $input = $test->readProperty('input');
     $options = $test->createOptions(array('format' => 'application/nquads'));
     $test->run('jsonld_from_rdf', array($input, $options));
   }
