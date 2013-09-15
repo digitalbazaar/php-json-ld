@@ -1,7 +1,7 @@
 <?php
 /**
  * PHP implementation of the JSON-LD API.
- * Version: 0.2.0
+ * Version: 0.2.1
  *
  * @author Dave Longley
  *
@@ -233,7 +233,7 @@ $jsonld_cache->activeCtx = new ActiveContextCache();
 
 /** Stores the default JSON-LD document loader. */
 global $jsonld_default_load_document;
-$jsonld_default_load_document = null;
+$jsonld_default_load_document = 'jsonld_default_document_loader';
 
 /**
  * Sets the default JSON-LD document loader.
@@ -276,6 +276,8 @@ function jsonld_get_url($url) {
  * @return stdClass the RemoteDocument object.
  */
 function jsonld_default_document_loader($url) {
+  $doc = (object)array(
+    'contextUrl' => null, 'document' => null, 'documentUrl' => $url);
   $redirects = array();
 
   $opts = array(
@@ -290,30 +292,61 @@ function jsonld_default_document_loader($url) {
       'header' =>
         "Accept: application/ld+json\r\n" .
         "User-Agent: JSON-LD PHP Client/1.0\r\n"));
-  $stream = stream_context_create($opts);
-  stream_context_set_params($stream, array('notification' =>
-    function($notification_code, $severity, $message) use (&$redirects) {
+  $context = stream_context_create($opts);
+  $content_type = null;
+  stream_context_set_params($context, array('notification' =>
+    function($notification_code, $severity, $message) use (
+      &$redirects, &$content_type) {
       switch($notification_code) {
       case STREAM_NOTIFY_REDIRECTED:
         $redirects[] = $message;
         break;
+      case STREAM_NOTIFY_MIME_TYPE_IS:
+        $content_type = $message;
+        break;
       };
     }));
-  $result = @file_get_contents($url, false, $stream);
+  $result = @file_get_contents($url, false, $context);
   if($result === false) {
     throw new JsonLdException(
       'Could not retrieve a JSON-LD document from the URL.',
       'jsonld.LoadDocumentError', 'loading document failed');
   }
+  $link_header = array();
+  foreach($http_response_header as $header) {
+    if(strpos($header, 'link') === 0) {
+      $value = explode(': ', $header);
+      if(count($value) > 1) {
+        $link_header[] = $value[1];
+      }
+    }
+  }
+  $link_header = jsonld_parse_link_header(join(',', $link_header));
+  if(isset($link_header['http://www.w3.org/ns/json-ld#context'])) {
+    $link_header = $link_header['http://www.w3.org/ns/json-ld#context'];
+  }
+  else {
+    $link_header = null;
+  }
+  if($link_header && $content_type !== 'application/ld+json') {
+    // only 1 related link header permitted
+    if(is_array($link_header)) {
+      throw new JsonLdException(
+        'URL could not be dereferenced, it has more than one ' .
+        'associated HTTP Link Header.', 'jsonld.LoadDocumentError',
+        'multiple context link headers', array('url' => $url));
+    }
+    $doc->{'contextUrl'} = $link_header->target;
+  }
+
+  // update document url based on redirects
   $redirs = count($redirects);
   if($redirs > 0) {
     $url = $redirects[$redirs - 1];
   }
-  // return RemoteDocument
-  return (object)array(
-    'contextUrl' => null,
-    'document' => $result,
-    'documentUrl' => $url);
+  $doc->document = $result;
+  $doc->documentUrl = $url;
+  return $doc;
 }
 
 /**
@@ -330,6 +363,8 @@ function jsonld_default_secure_document_loader($url) {
       'jsonld.LoadDocumentError', 'loading document failed');
   }
 
+  $doc = (object)array(
+    'contextUrl' => null, 'document' => null, 'documentUrl' => $url);
   $redirects = array();
 
   // default JSON-LD https GET implementation
@@ -340,21 +375,54 @@ function jsonld_default_secure_document_loader($url) {
       'header' =>
         "Accept: application/ld+json\r\n" .
         "User-Agent: JSON-LD PHP Client/1.0\r\n"));
-  $stream = stream_context_create($opts);
-  stream_context_set_params($stream, array('notification' =>
-    function($notification_code, $severity, $message) use (&$redirects) {
+  $context = stream_context_create($opts);
+  $content_type = null;
+  stream_context_set_params($context, array('notification' =>
+    function($notification_code, $severity, $message) use (
+      &$redirects, &$content_type) {
       switch($notification_code) {
       case STREAM_NOTIFY_REDIRECTED:
         $redirects[] = $message;
         break;
+      case STREAM_NOTIFY_MIME_TYPE_IS:
+        $content_type = $message;
+        break;
       };
-  }));
-  $result = @file_get_contents($url, false, $stream);
+    }));
+  $result = @file_get_contents($url, false, $context);
   if($result === false) {
     throw new JsonLdException(
       'Could not retrieve a JSON-LD document from the URL.',
       'jsonld.LoadDocumentError', 'loading document failed');
   }
+  $link_header = array();
+  foreach($http_response_header as $header) {
+    if(strpos($header, 'link') === 0) {
+      $value = explode(': ', $header);
+      if(count($value) > 1) {
+        $link_header[] = $value[1];
+      }
+    }
+  }
+  $link_header = jsonld_parse_link_header(join(',', $link_header));
+  if(isset($link_header['http://www.w3.org/ns/json-ld#context'])) {
+    $link_header = $link_header['http://www.w3.org/ns/json-ld#context'];
+  }
+  else {
+    $link_header = null;
+  }
+  if($link_header && $content_type !== 'application/ld+json') {
+    // only 1 related link header permitted
+    if(is_array($link_header)) {
+      throw new JsonLdException(
+        'URL could not be dereferenced, it has more than one ' .
+        'associated HTTP Link Header.', 'jsonld.LoadDocumentError',
+        'multiple context link headers', array('url' => $url));
+    }
+    $doc->{'contextUrl'} = $link_header->target;
+  }
+
+  // update document url based on redirects
   foreach($redirects as $redirect) {
     if(strpos($redirect, 'https') !== 0) {
       throw new JsonLdException(
@@ -363,11 +431,9 @@ function jsonld_default_secure_document_loader($url) {
     }
     $url = $redirect;
   }
-  // return RemoteDocument
-  return (object)array(
-    'contextUrl' => null,
-    'document' => $result,
-    'documentUrl' => $url);
+  $doc->document = $result;
+  $doc->documentUrl = $url;
+  return $doc;
 }
 
 /** Registered global RDF dataset parsers hashed by content-type. */
@@ -5514,7 +5580,11 @@ class JsonLdProcessor {
    */
   protected static function _parse_json($json) {
     $rval = json_decode($json);
-    switch(json_last_error()) {
+    $error = json_last_error();
+    if($error === JSON_ERROR_NONE && $rval === null) {
+      $error = JSON_ERROR_SYNTAX;
+    }
+    switch($error) {
     case JSON_ERROR_NONE:
       break;
     case JSON_ERROR_DEPTH:
@@ -5561,6 +5631,9 @@ class JsonLdException extends Exception {
   }
   public function __toString() {
     $rval = __CLASS__ . ": [{$this->type}]: {$this->message}\n";
+    if($this->code) {
+      $rval .= 'Code: ' . $this->code . "\n";
+    }
     if($this->details) {
       $rval .= 'Details: ' . print_r($this->details, true) . "\n";
     }

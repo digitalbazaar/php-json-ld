@@ -286,9 +286,7 @@ class JsonLdTest {
   }
 
   public function createDocumentLoader() {
-    global $jsonld_default_load_document;
     $base = 'http://json-ld.org/test-suite';
-    $loader = $jsonld_default_load_document;
     $test = $this;
 
     $load_locally = function($url) use ($test, $base) {
@@ -314,8 +312,13 @@ class JsonLdTest {
           if(is_array($link_header)) {
             $link_header = join(',', $link_header);
           }
-          $link_header = jsonld_parse_link_header(
-            $link_header)['http://www.w3.org/ns/json-ld#context'] ?: null;
+          $link_header = jsonld_parse_link_header($link_header);
+          if(isset($link_header['http://www.w3.org/ns/json-ld#context'])) {
+            $link_header = $link_header['http://www.w3.org/ns/json-ld#context'];
+          }
+          else {
+            $link_header = null;
+          }
           if($link_header && $content_type !== 'application/ld+json') {
             if(is_array($link_header)) {
               throw new Exception('multiple context link headers');
@@ -336,12 +339,12 @@ class JsonLdTest {
       return $doc;
     };
 
-    $local_loader = function($url) use ($loader, $load_locally) {
+    $local_loader = function($url) use ($test, $base, $load_locally) {
       // always load remote-doc and non-base tests remotely
-      /*if(strpos($url, $base) !== 0 ||
-        $test->manifest->data['name'] === 'Remote document') {
-        return call_user_func($loader, $url);
-      }*/
+      if(strpos($url, $base) !== 0 ||
+        $test->manifest->data->name === 'Remote document') {
+        return call_user_func('jsonld_default_document_loader', $url);
+      }
 
       // attempt to load locally
       return call_user_func($load_locally, $url);
