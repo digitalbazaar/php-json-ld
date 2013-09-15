@@ -18,6 +18,7 @@ class JsonLdTestCase extends PHPUnit_Framework_TestCase {
   public function run(PHPUnit_Framework_TestResult $result = NULL) {
     global $EARL;
     $EARL->attach($result);
+    $this->result = $result;
     parent::run($result);
   }
 
@@ -439,7 +440,7 @@ class EarlReport extends PHPUnit_Util_Printer
   implements PHPUnit_Framework_TestListener {
   public function __construct() {
     $this->filename = null;
-    $this->result = null;
+    $this->attached = false;
     $this->report = (object)array(
       '@context' => (object)array(
         'doap' => 'http://usefulinc.com/ns/doap#',
@@ -487,8 +488,8 @@ class EarlReport extends PHPUnit_Util_Printer
    * @param PHPUnit_Framework_Test $result the result to attach to.
    */
   public function attach(PHPUnit_Framework_TestResult $result) {
-    if(!$this->result && $this->filename) {
-      $this->result = $result;
+    if(!$this->attached && $this->filename) {
+      $this->attached = true;
       $result->addListener($this);
     }
   }
@@ -539,13 +540,12 @@ class EarlReport extends PHPUnit_Util_Printer
     PHPUnit_Framework_Test $test,
     PHPUnit_Framework_AssertionFailedError $e, $time) {
     $this->addAssertion($test->test, false);
-    if($this->result->shouldStop()) {
+    if($test->result->shouldStop()) {
       printf("\n\nFAILED\n");
       printf("Test: %s\n", $test->test->name);
       printf("Purpose: %s\n", $test->test->data->purpose);
       printf("EXPECTED: %s\n", Util::jsonldEncode($test->test->expected));
       printf("ACTUAL: %s\n", Util::jsonldEncode($test->test->actual));
-      exit(0);
     }
   }
 
