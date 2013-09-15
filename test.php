@@ -570,15 +570,23 @@ class EarlReport implements PHPUnit_Framework_TestListener {
 
 class Util {
   public static function readFile($filename) {
-    return file_get_contents($filename);
+    $rval = @file_get_contents($filename);
+    if($rval === false) {
+      throw new Exception('File read error: ' . $filename);
+    }
+    return $rval;
   }
 
   public static function readJson($filename) {
-    return json_decode(file_get_contents($filename));
+    $rval = json_decode(self::readFile($filename));
+    if($rval === null) {
+      throw new Exception('JSON parse error');
+    }
+    return $rval;
   }
 
   public static function readNQuads($filename) {
-    return readFile($filename);
+    return self::readFile($filename);
   }
 
   public static function jsonldEncode($input) {

@@ -5063,6 +5063,9 @@ class JsonLdProcessor {
     // for tracking the URLs to retrieve
     $urls = new stdClass();
 
+    // regex for validating URLs
+    $regex = '/(http|https):\/\/(\w+:{0,1}\w*@)?(\S+)(:[0-9]+)?(\/|\/([\w#!:.?+=&%@!\-\/]))?/';
+
     // find all URLs in the given input
     $this->_findContextUrls($input, $urls, false, $base);
 
@@ -5070,6 +5073,12 @@ class JsonLdProcessor {
     $queue = array();
     foreach($urls as $url => $ctx) {
       if($ctx === false) {
+        // validate URL
+        if(!preg_match($regex, $url)) {
+          throw new JsonLdException(
+            'Malformed or unsupported URL.', 'jsonld.InvalidUrl',
+            'loading remote context failed', array('url' => $url));
+        }
         $queue[] = $url;
       }
     }
@@ -5098,7 +5107,7 @@ class JsonLdProcessor {
         catch(Exception $e) {
           throw new JsonLdException(
             'Could not parse JSON from URL.',
-            'jsonld.ParseError', 'invalid remote context',
+            'jsonld.ParseError', 'loading remote context failed',
             array('url' => $url), $e);
         }
       }
