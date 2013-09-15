@@ -487,7 +487,7 @@ class EarlReport extends PHPUnit_Util_Printer
    * @param PHPUnit_Framework_Test $result the result to attach to.
    */
   public function attach(PHPUnit_Framework_TestResult $result) {
-    if(!$this->result) {
+    if(!$this->result && $this->filename) {
       $this->result = $result;
       $result->addListener($this);
     }
