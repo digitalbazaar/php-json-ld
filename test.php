@@ -10,18 +10,6 @@ require_once('jsonld.php');
 
 class JsonLdTestCase extends PHPUnit_Framework_TestCase {
   /**
-   * Called after all tests; optionally outputs an earl report.
-   */
-  public static function tearDownAfterClass() {
-    global $EARL, $OPTIONS;
-    if(isset($OPTIONS['-e'])) {
-      $filename = $OPTIONS['-e'];
-      printf("\nWriting EARL report to: %s\n", $filename);
-      $EARL->write($filename);
-    }
-  }
-
-  /**
    * Runs this test case. Overridden to attach to EARL report w/o need for
    * an external XML configuration file.
    *
@@ -444,8 +432,10 @@ class JsonLdTestIterator implements Iterator {
   }
 }
 
-class EarlReport implements PHPUnit_Framework_TestListener {
+class EarlReport extends PHPUnit_Util_Printer
+  implements PHPUnit_Framework_TestListener {
   public function __construct() {
+    $this->filename = null;
     $this->result = null;
     $this->report = (object)array(
       '@context' => (object)array(
@@ -523,13 +513,14 @@ class EarlReport implements PHPUnit_Framework_TestListener {
 
   /**
    * Writes this EARL report to a file.
-   *
-   * @param string $filename the name of the file to write to.
    */
-  public function write($filename) {
-    $fd = fopen($filename, 'w');
-    fwrite($fd, Util::jsonldEncode($this->report));
-    fclose($fd);
+  public function flush() {
+    if($this->filename) {
+      printf("\nWriting EARL report to: %s\n", $this->filename);
+      $fd = fopen($this->filename, 'w');
+      fwrite($fd, Util::jsonldEncode($this->report));
+      fclose($fd);
+    }
   }
 
   public function endTest(PHPUnit_Framework_Test $test, $time) {
@@ -617,9 +608,6 @@ $TESTS = array();
 // parsed command line options
 $OPTIONS = array();
 
-// EARL Report
-$EARL = new EarlReport();
-
 // parse command line options
 global $argv;
 $args = $argv;
@@ -645,6 +633,12 @@ if(!isset($OPTIONS['-d'])) {
   echo "php-json-ld Tests\n";
   echo "Usage: phpunit test.php -d <$dvar> [-e <$evar>]\n\n";
   exit(0);
+}
+
+// EARL Report
+$EARL = new EarlReport();
+if(isset($OPTIONS['-e'])) {
+  $EARL->filename = $OPTIONS['-e'];
 }
 
 // load root manifest
