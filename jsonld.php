@@ -855,7 +855,7 @@ class JsonLdProcessor {
           'jsonld.NullRemoteDocument');
       }
       if(is_string($remote_doc->document)) {
-        $remote_doc->document = _parse_json($remote_doc->document);
+        $remote_doc->document = self::_parse_json($remote_doc->document);
       }
     }
     catch(Exception $e) {
@@ -1017,7 +1017,7 @@ class JsonLdProcessor {
           'jsonld.NullRemoteDocument');
       }
       if(is_string($remote_frame->document)) {
-        $remote_frame->document = _parse_json($remote_frame->document);
+        $remote_frame->document = self::_parse_json($remote_frame->document);
       }
     }
     catch(Exception $e) {
@@ -5100,7 +5100,7 @@ class JsonLdProcessor {
       // parse string context as JSON
       if(is_string($ctx)) {
         try {
-          $ctx = _parse_json($ctx);
+          $ctx = self::_parse_json($ctx);
         }
         catch(Exception $e) {
           throw new JsonLdException(

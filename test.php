@@ -132,14 +132,13 @@ class JsonLdTestCase extends PHPUnit_Framework_TestCase {
    * @param JsonLdTest $test the test to run.
    *
    * @group normalize
-   * @depends toRdf
    * @dataProvider normalizeProvider
    */
   public function testNormalize($test) {
     $this->test = $test;
     $input = $test->readUrl('input');
     $options = $test->createOptions(array('format' => 'application/nquads'));
-    $test->run('jsonld_compact', array($input, $options));
+    $test->run('jsonld_normalize', array($input, $options));
   }
 
   public function expandProvider() {
