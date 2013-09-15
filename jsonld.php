@@ -325,7 +325,9 @@ function jsonld_default_document_loader($url) {
  */
 function jsonld_default_secure_document_loader($url) {
   if(strpos($url, 'https') !== 0) {
-    throw new Exception("Could not GET url: '$url'; 'https' is required.");
+    throw new JsonLdException(
+      "Could not GET url: '$url'; 'https' is required.",
+      'jsonld.LoadDocumentError', 'loading document failed');
   }
 
   $redirects = array();
@@ -349,12 +351,15 @@ function jsonld_default_secure_document_loader($url) {
   }));
   $result = @file_get_contents($url, false, $stream);
   if($result === false) {
-    throw new Exception("Could not GET url: '$url'");
+    throw new JsonLdException(
+      'Could not retrieve a JSON-LD document from the URL.',
+      'jsonld.LoadDocumentError', 'loading document failed');
   }
   foreach($redirects as $redirect) {
     if(strpos($redirect, 'https') !== 0) {
-      throw new Exception(
-        "Could not GET redirected url: '$redirect'; 'https' is required.");
+      throw new JsonLdException(
+        "Could not GET redirected url: '$redirect'; 'https' is required.",
+        'jsonld.LoadDocumentError', 'loading document failed');
     }
     $url = $redirect;
   }
