@@ -1056,7 +1056,7 @@ class JsonLdProcessor {
 
     try {
       // expand frame
-      $opts = self::copy($options);
+      $opts = $options;
       $opts['keepFreeFloatingNodes'] = true;
       $expanded_frame = $this->expand($frame, $opts);
     }
@@ -1113,7 +1113,7 @@ class JsonLdProcessor {
 
     try {
       // convert to RDF dataset then do normalization
-      $opts = self::copy($options);
+      $opts = $options;
       if(isset($opts['format'])) {
         unset($opts['format']);
       }
@@ -1834,9 +1834,7 @@ class JsonLdProcessor {
     if(is_object($value) || is_array($value)) {
       return unserialize(serialize($value));
     }
-    else {
-      return $value;
-    }
+    return $value;
   }
 
   /**
