@@ -53,7 +53,7 @@ the [json-ld.org repository][json-ld.org] hosted on GitHub.
 
 https://github.com/json-ld/json-ld.org
 
-Then run the jsonld-tests.php application and point it at the directory
+Then run the PHPUnit test.php application and point it at the directory
 containing the tests.
 
     phpunit test.php -d {PATH_TO_JSON_LD_ORG/test-suite}
