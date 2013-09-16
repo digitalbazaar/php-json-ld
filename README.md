@@ -56,7 +56,7 @@ https://github.com/json-ld/json-ld.org
 Then run the jsonld-tests.php application and point it at the directory
 containing the tests.
 
-    php jsonld-tests.php -d {PATH_TO_JSON_LD_ORG/test-suite/tests}
+    phpunit test.php -d {PATH_TO_JSON_LD_ORG/test-suite}
 
 [PHP]: http://php.net
 [JSON-LD]: http://json-ld.org/
