@@ -31,10 +31,71 @@ to JSON with added semantics. Finally, the format is intended to be fast
 to parse, fast to generate, stream-based and document-based processing
 compatible, and require a very small memory footprint in order to operate.
 
+## Quick Examples
+
+```php
+$doc = (object)array(
+  "http://schema.org/name" => "Manu Sporny",
+  "http://schema.org/url" => {"@id": "http://manu.sporny.org/"},
+  "http://schema.org/image" => {"@id": "http://manu.sporny.org/images/manu.png"});
+
+$context = (object)array(
+  "name" => "http://schema.org/name",
+  "homepage" => {"@id": "http://schema.org/url", "@type": "@id"},
+  "image" => {"@id": "http://schema.org/image", "@type": "@id"});
+
+// compact a document according to a particular context
+// see: http://json-ld.org/spec/latest/json-ld/#compacted-document-form
+$compacted = jsonld_compact($doc, $context);
+
+echo json_encode($compacted, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+/* Output:
+{
+  "@context": {...},
+  "image": "http://manu.sporny.org/images/manu.png",
+  "homepage": "http://manu.sporny.org/",
+  "name": "Manu Sporny"
+}
+*/
+
+// compact using URLs
+jsonld_compact('http://example.org/doc', 'http://example.org/context');
+
+// expand a document, removing its context
+// see: http://json-ld.org/spec/latest/json-ld/#expanded-document-form
+$expanded = jsonld_expand($compacted) {
+echo json_encode($expanded, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+/* Output:
+{
+  "http://schema.org/image": [{"@id": "http://manu.sporny.org/images/manu.png"}],
+  "http://schema.org/name": [{"@value": "Manu Sporny"}],
+  "http://schema.org/url": [{"@id": "http://manu.sporny.org/"}]
+}
+*/
+
+// expand using URLs
+jsonld_expand('http://example.org/doc');
+
+// flatten a document
+// see: http://json-ld.org/spec/latest/json-ld/#flattened-document-form
+$flattened = jsonld_flatten($doc);
+// all deep-level trees flattened to the top-level
+
+// frame a document
+// see: http://json-ld.org/spec/latest/json-ld-framing/#introduction
+$framed = jsonld_frame($doc, $frame);
+// document transformed into a particular tree structure per the given frame
+
+// normalize a document
+$normalized = jsonld_normalize($doc, array('format' => 'application/nquads'));
+// normalized is a string that is a canonical representation of the document
+// that can be used for hashing
+```
+
 Commercial Support
 ------------------
 
-Commercial support for this library is available upon request from 
+Commercial support for this library is available upon request from
 Digital Bazaar: support@digitalbazaar.com
 
 Source
