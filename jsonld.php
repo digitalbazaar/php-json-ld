@@ -5848,7 +5848,7 @@ class ActiveContextCache {
     if(!property_exists($this->cache, $key1)) {
       $this->cache->{$key1} = new stdClass();
     }
-    $this->cache->{$key1}->{$key2} = $result;
+    $this->cache->{$key1}->{$key2} = JsonLdProcessor::copy($result);
   }
 }
 
