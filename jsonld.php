@@ -1,7 +1,7 @@
 <?php
 /**
  * PHP implementation of the JSON-LD API.
- * Version: 0.2.2
+ * Version: 0.2.3
  *
  * @author Dave Longley
  *
@@ -2855,7 +2855,7 @@ class JsonLdProcessor {
           $node_map->{$o->value} = (object)array('@id' => $o->value);
         }
 
-        if($p === self::RDF_TYPE && $object_is_id) {
+        if($p === self::RDF_TYPE && !$options['useRdfType'] && $object_is_id) {
           self::addValue(
             $node, '@type', $o->value, array('propertyIsArray' => true));
           continue;
