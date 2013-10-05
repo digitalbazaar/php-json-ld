@@ -1,7 +1,7 @@
 <?php
 /**
  * PHP implementation of the JSON-LD API.
- * Version: 0.2.3
+ * Version: 0.2.4
  *
  * @author Dave Longley
  *
@@ -681,10 +681,12 @@ function jsonld_remove_base($base, $iri) {
   // remove root from IRI
   $rel = jsonld_parse_url(substr($iri, strlen($root)));
 
-  // remove path segments that match
+  // remove path segments that match (do not remove last segment unless there
+  // is a hash or query)
   $base_segments = explode('/', $base['normalizedPath']);
   $iri_segments = explode('/', $rel['normalizedPath']);
-  while(count($base_segments) > 0 && count($iri_segments) > 0) {
+  $last = (isset($rel['query']) || isset($rel['fragment'])) ? 0 : 1;
+  while(count($base_segments) > 0 && count($iri_segments) > $last) {
     if($base_segments[0] !== $iri_segments[0]) {
       break;
     }
