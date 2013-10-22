@@ -3594,10 +3594,17 @@ class JsonLdProcessor {
         $reverse_map = $input->{'@reverse'};
         foreach($reverse_map as $reverse_property => $items) {
           foreach($items as $item) {
+            $item_name = null;
+            if(property_exists($item, '@id')) {
+              $item_name = $item->{'@id'};
+            }
+            if(self::_isBlankNode($item)) {
+              $item_name = $namer->getName($item_name);
+            }
+            $this->_createNodeMap($item, $graphs, $graph, $namer, $item_name);
             self::addValue(
-              $item, $reverse_property, $referenced_node,
+              $subjects->{$item_name}, $reverse_property, $referenced_node,
               array('propertyIsArray' => true, 'allowDuplicate' => false));
-            $this->_createNodeMap($item, $graphs, $graph, $namer);
           }
         }
         continue;
