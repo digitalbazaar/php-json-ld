@@ -586,6 +586,11 @@ function jsonld_remove_dot_segments($path, $has_authority) {
  * @return string the absolute IRI.
  */
 function jsonld_prepend_base($base, $iri) {
+  // skip IRI processing
+  if($base === null) {
+    return $iri;
+  }
+
   // already an absolute IRI
   if(strpos($iri, ':') !== false) {
     return $iri;
@@ -659,6 +664,11 @@ function jsonld_prepend_base($base, $iri) {
  *           IRI.
  */
 function jsonld_remove_base($base, $iri) {
+  // skip IRI processing
+  if($base === null) {
+    return $iri;
+  }
+
   if(is_string($base)) {
     $base = jsonld_parse_url($base);
   }
@@ -3069,7 +3079,10 @@ class JsonLdProcessor {
             '@context must be an absolute IRI or the empty string.',
             'jsonld.SyntaxError', 'invalid base IRI', array('context' => $ctx));
         }
-        $rval->{'@base'} = jsonld_parse_url($base);
+        if($base !== null) {
+          $base = jsonld_parse_url($base);
+        }
+        $rval->{'@base'} = $base;
         $defined->{'@base'} = true;
       }
 
@@ -3285,6 +3298,9 @@ class JsonLdProcessor {
     sort($ids);
     foreach($ids as $id) {
       $node = $graph->{$id};
+      if($id === '"') {
+        $id = '';
+      }
       $properties = array_keys((array)$node);
       sort($properties);
       foreach($properties as $property) {
@@ -3576,9 +3592,19 @@ class JsonLdProcessor {
     }
     $subjects = $graphs->{$graph};
     if(!property_exists($subjects, $name)) {
-      $subjects->{$name} = new stdClass();
+      if($name === '') {
+        $subjects->{'"'} = new stdClass();
+      }
+      else {
+        $subjects->{$name} = new stdClass();
+      }
     }
-    $subject = $subjects->{$name};
+    if($name === '') {
+      $subject = $subjects->{'"'};
+    }
+    else {
+      $subject = $subjects->{$name};
+    }
     $subject->{'@id'} = $name;
     $properties = array_keys((array)$input);
     sort($properties);
@@ -3602,6 +3628,9 @@ class JsonLdProcessor {
               $item_name = $namer->getName($item_name);
             }
             $this->_createNodeMap($item, $graphs, $graph, $namer, $item_name);
+            if($item_name === '') {
+              $item_name = '"';
+            }
             self::addValue(
               $subjects->{$item_name}, $reverse_property, $referenced_node,
               array('propertyIsArray' => true, 'allowDuplicate' => false));
