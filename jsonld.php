@@ -1,7 +1,7 @@
 <?php
 /**
  * PHP implementation of the JSON-LD API.
- * Version: 0.2.7
+ * Version: 0.2.8
  *
  * @author Dave Longley
  *
@@ -159,6 +159,34 @@ function jsonld_from_rdf($input, $options=array()) {
 function jsonld_to_rdf($input, $options=array()) {
   $p = new JsonLdProcessor();
   return $p->toRDF($input, $options);
+}
+
+/**
+ * JSON-encodes (with unescaped slashes) the given stdClass or array.
+ *
+ * @param mixed $input the native PHP stdClass or array which will be
+ *          converted to JSON by json_encode().
+ *
+ * @return the encoded JSON data.
+ */
+function jsonld_encode($input) {
+  // newer PHP has a flag to avoid escaped '/'
+  if(defined('JSON_UNESCAPED_SLASHES')) {
+     return json_encode($input, JSON_UNESCAPED_SLASHES);
+  }
+  // use a simple string replacement of '\/' to '/'.
+  return str_replace('\\/', '/', json_encode($input));
+}
+
+/**
+ * Decodes a serialized JSON-LD object.
+ *
+ * @param string $input the JSON-LD input.
+ *
+ * @return mixed the resolved JSON-LD object, null on error.
+ */
+function jsonld_decode($input) {
+  return json_decode($input);
 }
 
 /**
