@@ -1,7 +1,7 @@
 <?php
 /**
  * PHP implementation of the JSON-LD API.
- * Version: 0.2.8
+ * Version: 0.3.0
  *
  * @author Dave Longley
  *
@@ -312,14 +312,8 @@ function jsonld_default_document_loader($url) {
     'http' => array(
       'method' => 'GET',
       'header' =>
-        "Accept: application/ld+json\r\n" .
-        "User-Agent: JSON-LD PHP Client/1.0\r\n"),
-    'https' => array(
-      'verify_peer' => true,
-      'method' => 'GET',
-      'header' =>
-        "Accept: application/ld+json\r\n" .
-        "User-Agent: JSON-LD PHP Client/1.0\r\n"));
+        "Accept: application/ld+json\r\n"),
+    'ssl' => array('verify_peer' => true));
   $context = stream_context_create($opts);
   $content_type = null;
   stream_context_set_params($context, array('notification' =>
@@ -397,12 +391,11 @@ function jsonld_default_secure_document_loader($url) {
 
   // default JSON-LD https GET implementation
   $opts = array(
-    'https' => array(
-      'verify_peer' => true,
-      'method' => "GET",
+    'http' => array(
+      'method' => 'GET',
       'header' =>
-        "Accept: application/ld+json\r\n" .
-        "User-Agent: JSON-LD PHP Client/1.0\r\n"));
+        "Accept: application/ld+json\r\n"),
+    'ssl' => array('verify_peer' => true));
   $context = stream_context_create($opts);
   $content_type = null;
   stream_context_set_params($context, array('notification' =>
