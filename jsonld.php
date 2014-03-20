@@ -1,7 +1,7 @@
 <?php
 /**
  * PHP implementation of the JSON-LD API.
- * Version: 0.3.0
+ * Version: 0.3.1
  *
  * @author Dave Longley
  *
@@ -166,16 +166,19 @@ function jsonld_to_rdf($input, $options=array()) {
  *
  * @param mixed $input the native PHP stdClass or array which will be
  *          converted to JSON by json_encode().
+ * @param int $options the options to use.
+ *          [JSON_PRETTY_PRINT] pretty print.
+ * @param int $depth the maximum depth to use.
  *
  * @return the encoded JSON data.
  */
-function jsonld_encode($input) {
+function jsonld_encode($input, $options=0, $depth=512) {
   // newer PHP has a flag to avoid escaped '/'
   if(defined('JSON_UNESCAPED_SLASHES')) {
-     return json_encode($input, JSON_UNESCAPED_SLASHES);
+     return json_encode($input, JSON_UNESCAPED_SLASHES | $options, $depth);
   }
   // use a simple string replacement of '\/' to '/'.
-  return str_replace('\\/', '/', json_encode($input));
+  return str_replace('\\/', '/', json_encode($input, $options, $depth));
 }
 
 /**
