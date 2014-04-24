@@ -331,7 +331,7 @@ function jsonld_default_document_loader($url) {
   $result = @file_get_contents($url, false, $context);
   if($result === false) {
     throw new JsonLdException(
-      'Could not retrieve a JSON-LD document from the URL.',
+      'Could not retrieve a JSON-LD document from the URL: ' . $url,
       'jsonld.LoadDocumentError', 'loading document failed');
   }
   $link_header = array();
@@ -412,7 +412,7 @@ function jsonld_default_secure_document_loader($url) {
   $result = @file_get_contents($url, false, $context);
   if($result === false) {
     throw new JsonLdException(
-      'Could not retrieve a JSON-LD document from the URL.',
+      'Could not retrieve a JSON-LD document from the URL: ' + $url,
       'jsonld.LoadDocumentError', 'loading document failed');
   }
   $link_header = array();
@@ -944,7 +944,7 @@ class JsonLdProcessor {
       }
     } catch(Exception $e) {
       throw new JsonLdException(
-        'Could not retrieve a JSON-LD document from the URL.',
+        'Could not retrieve a JSON-LD document from the URL: ' . $url,
         'jsonld.LoadDocumentError', 'loading document failed',
         array('remoteDoc' => $remote_doc), $e);
     }
@@ -1099,7 +1099,7 @@ class JsonLdProcessor {
       }
     } catch(Exception $e) {
       throw new JsonLdException(
-        'Could not retrieve a JSON-LD document from the URL.',
+        'Could not retrieve a JSON-LD document from the URL: ' . $url,
         'jsonld.LoadDocumentError', 'loading document failed',
         array('remoteDoc' => $remote_doc), $e);
     }
