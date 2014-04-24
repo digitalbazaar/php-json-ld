@@ -1,7 +1,7 @@
 <?php
 /**
  * PHP implementation of the JSON-LD API.
- * Version: 0.3.2
+ * Version: 0.3.3
  *
  * @author Dave Longley
  *
@@ -286,7 +286,7 @@ function jsonld_get_url($url) {
   if($jsonld_default_load_document !== null) {
     $document_loader = $jsonld_default_load_document;
   } else {
-    $document_loader = $jsonld_default_document_loader;
+    $document_loader = 'jsonld_default_document_loader';
   }
 
   $remote_doc = call_user_func($document_loader, $url);
@@ -393,12 +393,6 @@ function jsonld_default_secure_document_loader($url) {
     'contextUrl' => null, 'document' => null, 'documentUrl' => $url);
   $redirects = array();
 
-  // get expected cert common name for TLS
-  $parsed = parse_url($url);
-  $host = isset($parsed['host']) ? $parsed['host'] : '';
-  $port = isset($parsed['port']) ? ':' . $parsed['port'] : '';
-  $cn = $host . $port;
-
   // default JSON-LD https GET implementation
   $opts = array(
     'http' => array(
@@ -408,7 +402,6 @@ function jsonld_default_secure_document_loader($url) {
     'ssl' => array(
       'verify_peer' => true,
       'allow_self_signed' => false,
-      'CN_match' => $cn,
       'cafile' => '/etc/ssl/certs/ca-certificates.crt'));
   $context = stream_context_create($opts);
   $content_type = null;
@@ -424,7 +417,7 @@ function jsonld_default_secure_document_loader($url) {
         break;
       };
     }));
-  $result = @file_get_contents($url, false, $context);
+  $result = file_get_contents($url, false, $context);
   if($result === false) {
     throw new JsonLdException(
       'Could not retrieve a JSON-LD document from the URL: ' + $url,
@@ -809,6 +802,8 @@ class JsonLdProcessor {
    * @return mixed the compacted JSON-LD output.
    */
   public function compact($input, $ctx, $options) {
+    global $jsonld_default_load_document;
+
     if($ctx === null) {
       throw new JsonLdException(
         'The compaction context must not be null.',
@@ -826,7 +821,7 @@ class JsonLdProcessor {
       'graph' => false,
       'skipExpansion' => false,
       'activeCtx' => false,
-      'documentLoader' => 'jsonld_default_document_loader'));
+      'documentLoader' => $jsonld_default_load_document));
 
     if($options['skipExpansion'] === true) {
       $expanded = $input;
@@ -934,9 +929,10 @@ class JsonLdProcessor {
    * @return array the expanded JSON-LD output.
    */
   public function expand($input, $options) {
+    global $jsonld_default_load_document;
     self::setdefaults($options, array(
       'keepFreeFloatingNodes' => false,
-      'documentLoader' => 'jsonld_default_document_loader'));
+      'documentLoader' => $jsonld_default_load_document));
 
     // if input is a string, attempt to dereference remote document
     if(is_string($input)) {
@@ -1035,9 +1031,10 @@ class JsonLdProcessor {
    * @return array the flattened output.
    */
   public function flatten($input, $ctx, $options) {
+    global $jsonld_default_load_document;
     self::setdefaults($options, array(
       'base' => is_string($input) ? $input : '',
-      'documentLoader' => 'jsonld_default_document_loader'));
+      'documentLoader' => $jsonld_default_load_document));
 
     try {
       // expand input
@@ -1085,13 +1082,14 @@ class JsonLdProcessor {
    * @return stdClass the framed JSON-LD output.
    */
   public function frame($input, $frame, $options) {
+    global $jsonld_default_load_document;
     self::setdefaults($options, array(
       'base' => is_string($input) ? $input : '',
       'compactArrays' => true,
       'embed' => true,
       'explicit' => false,
       'omitDefault' => false,
-      'documentLoader' => 'jsonld_default_document_loader'));
+      'documentLoader' => $jsonld_default_load_document));
 
     // if frame is a string, attempt to dereference remote document
     if(is_string($frame)) {
@@ -1195,9 +1193,10 @@ class JsonLdProcessor {
    * @return mixed the normalized output.
    */
   public function normalize($input, $options) {
+    global $jsonld_default_load_document;
     self::setdefaults($options, array(
       'base' => is_string($input) ? $input : '',
-      'documentLoader' => 'jsonld_default_document_loader'));
+      'documentLoader' => $jsonld_default_load_document));
 
     try {
       // convert to RDF dataset then do normalization
@@ -1283,10 +1282,11 @@ class JsonLdProcessor {
    * @return mixed the resulting RDF dataset (or a serialization of it).
    */
   public function toRDF($input, $options) {
+    global $jsonld_default_load_document;
     self::setdefaults($options, array(
       'base' => is_string($input) ? $input : '',
       'produceGeneralizedRdf' => false,
-      'documentLoader' => 'jsonld_default_document_loader'));
+      'documentLoader' => $jsonld_default_load_document));
 
     try {
       // expand input
@@ -1343,9 +1343,10 @@ class JsonLdProcessor {
    * @return stdClass the new active context.
    */
   public function processContext($active_ctx, $local_ctx, $options) {
+    global $jsonld_default_load_document;
     self::setdefaults($options, array(
       'base' => '',
-      'documentLoader' => 'jsonld_default_document_loader'));
+      'documentLoader' => $jsonld_default_load_document));
 
     // return initial context early for null context
     if($local_ctx === null) {
