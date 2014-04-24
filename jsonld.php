@@ -1,7 +1,7 @@
 <?php
 /**
  * PHP implementation of the JSON-LD API.
- * Version: 0.3.3
+ * Version: 0.3.4
  *
  * @author Dave Longley
  *
@@ -333,7 +333,7 @@ function jsonld_default_document_loader($url) {
         break;
       };
     }));
-  $result = file_get_contents($url, false, $context);
+  $result = @file_get_contents($url, false, $context);
   if($result === false) {
     throw new JsonLdException(
       'Could not retrieve a JSON-LD document from the URL: ' . $url,
@@ -417,7 +417,7 @@ function jsonld_default_secure_document_loader($url) {
         break;
       };
     }));
-  $result = file_get_contents($url, false, $context);
+  $result = @file_get_contents($url, false, $context);
   if($result === false) {
     throw new JsonLdException(
       'Could not retrieve a JSON-LD document from the URL: ' + $url,
@@ -955,7 +955,7 @@ class JsonLdProcessor {
       }
     } catch(Exception $e) {
       throw new JsonLdException(
-        'Could not retrieve a JSON-LD document from the URL: ' . $url,
+        'Could not retrieve a JSON-LD document from the URL.',
         'jsonld.LoadDocumentError', 'loading document failed',
         array('remoteDoc' => $remote_doc), $e);
     }
@@ -1112,9 +1112,9 @@ class JsonLdProcessor {
       }
     } catch(Exception $e) {
       throw new JsonLdException(
-        'Could not retrieve a JSON-LD document from the URL: ' . $url,
+        'Could not retrieve a JSON-LD document from the URL.',
         'jsonld.LoadDocumentError', 'loading document failed',
-        array('remoteDoc' => $remote_doc), $e);
+        array('remoteDoc' => $remote_frame), $e);
     }
 
     // preserve frame context
@@ -3578,6 +3578,10 @@ class JsonLdProcessor {
       if($property === '@graph') {
         // add graph subjects map entry
         if(!property_exists($graphs, $name)) {
+          // FIXME: temporary hack to avoid empty property bug
+          if(!$name) {
+            $name = '"';
+          }
           $graphs->{$name} = new stdClass();
         }
         $g = ($graph === '@merged') ? $graph : $name;
