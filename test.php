@@ -173,18 +173,16 @@ class JsonLdManifest {
         $filename = join(
           DIRECTORY_SEPARATOR, array($this->dirname, $entry));
         $entry = Util::readJson($filename);
-      }
-      else {
+      } else {
         $filename = $this->filename;
       }
 
-      // entry is another manifest
       if(JsonLdProcessor::hasValue($entry, '@type', 'mf:Manifest')) {
+        // entry is another manifest
         $manifest = new JsonLdManifest($entry, $filename);
         $manifest->load($tests);
-      }
-      // assume entry is a test
-      else {
+      } else {
+        // assume entry is a test
         $test = new JsonLdTest($this, $entry, $filename);
         $types = JsonLdProcessor::getValues($test->data, '@type');
         foreach($types as $type) {
@@ -223,8 +221,7 @@ class JsonLdTest {
     // read expected data
     if($this->isNegative) {
       $this->expected = $this->data->expect;
-    }
-    else {
+    } else {
       $this->expected = $this->readProperty('expect');
     }
 
@@ -234,8 +231,7 @@ class JsonLdTest {
         throw new Exception('Expected an error; one was not raised.');
       }
       PHPUnit_Framework_TestCase::assertEquals($this->expected, $this->actual);
-    }
-    catch(Exception $e) {
+    } catch(Exception $e) {
       if($this->isPositive) {
         throw $e;
       }
@@ -301,8 +297,7 @@ class JsonLdTest {
           $options->httpStatus >= '300') {
           $doc->documentUrl = ($test->manifest->data->{'baseIri'} .
             $options->redirectTo);
-        }
-        else if(property_exists($options, 'httpLink')) {
+        } else if(property_exists($options, 'httpLink')) {
           $content_type = (property_exists($options, 'contentType') ?
             $options->contentType : null);
           $extension = pathinfo($url, PATHINFO_EXTENSION);
@@ -316,8 +311,7 @@ class JsonLdTest {
           $link_header = jsonld_parse_link_header($link_header);
           if(isset($link_header['http://www.w3.org/ns/json-ld#context'])) {
             $link_header = $link_header['http://www.w3.org/ns/json-ld#context'];
-          }
-          else {
+          } else {
             $link_header = null;
           }
           if($link_header && $content_type !== 'application/ld+json') {
@@ -333,8 +327,7 @@ class JsonLdTest {
         substr($doc->{'documentUrl'}, strlen($base));
       try {
         $doc->{'document'} = Util::readJson($filename);
-      }
-      catch(Exception $e) {
+      } catch(Exception $e) {
         throw new Exception('loading document failed');
       }
       return $doc;
@@ -387,8 +380,7 @@ class JsonLdTestIterator implements Iterator {
     global $TESTS;
     if(isset($TESTS[$type])) {
       $this->tests = $TESTS[$type];
-    }
-    else {
+    } else {
       $this->tests = array();
     }
     $this->count = count($this->tests);
@@ -590,8 +582,7 @@ class Util {
         $options |= JSON_PRETTY_PRINT;
       }
       $json = json_encode($input, $options);
-    }
-    else {
+    } else {
       // use a simple string replacement of '\/' to '/'.
       $json = str_replace('\\/', '/', json_encode($input));
     }
