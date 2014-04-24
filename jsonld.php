@@ -313,7 +313,12 @@ function jsonld_default_document_loader($url) {
       'method' => 'GET',
       'header' =>
         "Accept: application/ld+json\r\n"),
-    'ssl' => array('verify_peer' => true));
+    /* Note: Use jsonld_default_secure_document_loader for security. */
+    'ssl' => array(
+      'verify_peer' => false,
+      'allow_self_signed' => true)
+  );
+
   $context = stream_context_create($opts);
   $content_type = null;
   stream_context_set_params($context, array('notification' =>
@@ -328,7 +333,7 @@ function jsonld_default_document_loader($url) {
         break;
       };
     }));
-  $result = @file_get_contents($url, false, $context);
+  $result = file_get_contents($url, false, $context);
   if($result === false) {
     throw new JsonLdException(
       'Could not retrieve a JSON-LD document from the URL: ' . $url,
@@ -388,13 +393,23 @@ function jsonld_default_secure_document_loader($url) {
     'contextUrl' => null, 'document' => null, 'documentUrl' => $url);
   $redirects = array();
 
+  // get expected cert common name for TLS
+  $parsed = parse_url($url);
+  $host = isset($parsed['host']) ? $parsed['host'] : '';
+  $port = isset($parsed['port']) ? ':' . $parsed['port'] : '';
+  $cn = $host . $port;
+
   // default JSON-LD https GET implementation
   $opts = array(
     'http' => array(
       'method' => 'GET',
       'header' =>
         "Accept: application/ld+json\r\n"),
-    'ssl' => array('verify_peer' => true));
+    'ssl' => array(
+      'verify_peer' => true,
+      'allow_self_signed' => false,
+      'CN_match' => $cn,
+      'cafile' => '/etc/ssl/certs/ca-certificates.crt'));
   $context = stream_context_create($opts);
   $content_type = null;
   stream_context_set_params($context, array('notification' =>
