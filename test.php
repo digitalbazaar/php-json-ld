@@ -4,7 +4,7 @@
  *
  * @author Dave Longley
  *
- * Copyright (c) 2013 Digital Bazaar, Inc. All rights reserved.
+ * Copyright (c) 2013-2014 Digital Bazaar, Inc. All rights reserved.
  */
 require_once('jsonld.php');
 
@@ -546,6 +546,8 @@ class EarlReport extends PHPUnit_Util_Printer
     $this->addAssertion($test->test, false);
   }
 
+  public function addRiskyTest(
+    PHPUnit_Framework_Test $test, Exception $e, $time) {}
   public function addSkippedTest(
     PHPUnit_Framework_Test $test, Exception $e, $time) {}
   public function startTest(PHPUnit_Framework_Test $test) {}
