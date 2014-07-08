@@ -2435,7 +2435,11 @@ class JsonLdProcessor {
       if(property_exists($active_ctx->mappings, $key) &&
         $active_ctx->mappings->{$key} &&
         $active_ctx->mappings->{$key}->reverse) {
-        $reverse_map = $rval->{'@reverse'} = new stdClass();
+        if(property_exists($rval, '@reverse')) {
+          $reverse_map = $rval->{'@reverse'};
+        } else {
+          $reverse_map = $rval->{'@reverse'} = new stdClass();
+        }
         $expanded_value = self::arrayify($expanded_value);
         foreach($expanded_value as $item) {
           if(self::_isValue($item) || self::_isList($item)) {
