@@ -36,13 +36,15 @@ compatible, and require a very small memory footprint in order to operate.
 ```php
 $doc = (object)array(
   "http://schema.org/name" => "Manu Sporny",
-  "http://schema.org/url" => {"@id": "http://manu.sporny.org/"},
-  "http://schema.org/image" => {"@id": "http://manu.sporny.org/images/manu.png"});
+  "http://schema.org/url" => (object)array("@id" => "http://manu.sporny.org/"),
+  "http://schema.org/image" => (object)array("@id" => "http://manu.sporny.org/images/manu.png")
+);
 
 $context = (object)array(
   "name" => "http://schema.org/name",
-  "homepage" => {"@id": "http://schema.org/url", "@type": "@id"},
-  "image" => {"@id": "http://schema.org/image", "@type": "@id"});
+  "homepage" => (object)array("@id" => "http://schema.org/url", "@type" => "@id"),
+  "image" => (object)array("@id" => "http://schema.org/image", "@type" => "@id")
+);
 
 // compact a document according to a particular context
 // see: http://json-ld.org/spec/latest/json-ld/#compacted-document-form
