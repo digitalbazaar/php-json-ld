@@ -2982,14 +2982,13 @@ class JsonLdProcessor {
       return self::_cloneActiveContext($active_ctx);
     }
 
-    // process each context in order
+    // process each context in order, update active context
+    // on each iteration to ensure proper caching
     $rval = $active_ctx;
-    $must_clone = true;
     foreach($ctxs as $ctx) {
       // reset to initial context
       if($ctx === null) {
-        $rval = $this->_getInitialContext($options);
-        $must_clone = false;
+        $rval = $active_ctx = $this->_getInitialContext($options);
         continue;
       }
 
@@ -3010,17 +3009,15 @@ class JsonLdProcessor {
       if(property_exists($jsonld_cache, 'activeCtx')) {
         $cached = $jsonld_cache->activeCtx->get($active_ctx, $ctx);
         if($cached) {
-          $rval = $cached;
+          $rval = $active_ctx = $cached;
           $must_clone = true;
           continue;
         }
       }
 
-      // clone context, if required, before updating
-      if($must_clone) {
-        $rval = self::_cloneActiveContext($rval);
-        $must_clone = false;
-      }
+      // update active context and clone new one before updating
+      $active_ctx = $rval;
+      $rval = self::_cloneActiveContext($rval);
 
       // define context mappings for keys in local context
       $defined = new stdClass();
@@ -4698,7 +4695,7 @@ class JsonLdProcessor {
       throw new JsonLdException(
         'Invalid JSON-LD syntax; keywords cannot be overridden.',
         'jsonld.SyntaxError', 'keyword redefinition',
-        array('context' => $local_ctx));
+        array('context' => $local_ctx, 'term' => $term));
     }
 
     // remove old mapping
