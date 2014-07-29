@@ -94,6 +94,7 @@ function jsonld_flatten($input, $ctx, $options=array()) {
  *          [base] the base IRI to use.
  *          [embed] default @embed flag (default: true).
  *          [explicit] default @explicit flag (default: false).
+ *          [requireAll] default @requireAll flag (default: true).
  *          [omitDefault] default @omitDefault flag (default: false).
  *          [documentLoader(url)] the document loader.
  *
@@ -1076,6 +1077,7 @@ class JsonLdProcessor {
    *          [expandContext] a context to expand with.
    *          [embed] default @embed flag (default: true).
    *          [explicit] default @explicit flag (default: false).
+   *          [requireAll] default @requireAll flag (default: true).
    *          [omitDefault] default @omitDefault flag (default: false).
    *          [documentLoader(url)] the document loader.
    *
@@ -1088,6 +1090,7 @@ class JsonLdProcessor {
       'compactArrays' => true,
       'embed' => true,
       'explicit' => false,
+      'requireAll' => true,
       'omitDefault' => false,
       'documentLoader' => $jsonld_default_load_document));
 
@@ -3679,13 +3682,18 @@ class JsonLdProcessor {
     $this->_validateFrame($state, $frame);
     $frame = $frame[0];
 
-    // filter out subjects that match the frame
-    $matches = $this->_filterSubjects($state, $subjects, $frame);
-
     // get flags for current frame
     $options = $state->options;
     $embed_on = $this->_getFrameFlag($frame, $options, 'embed');
     $explicit_on = $this->_getFrameFlag($frame, $options, 'explicit');
+    $require_all_on = $this->_getFrameFlag($frame, $options, 'requireAll');
+    $flags = array(
+      'embed' => $embed_on,
+      'explicit' => $explicit_on,
+      'requireAll' => $require_all_on);
+
+    // filter out subjects that match the frame
+    $matches = $this->_filterSubjects($state, $subjects, $frame, $flags);
 
     // add matches to output
     foreach($matches as $id => $subject) {
@@ -3859,15 +3867,16 @@ class JsonLdProcessor {
    * @param stdClass $state the current framing state.
    * @param array $subjects the set of subjects to filter.
    * @param stdClass $frame the parsed frame.
+   * @param assoc $flags the frame flags.
    *
    * @return stdClass all of the matched subjects.
    */
-  protected function _filterSubjects($state, $subjects, $frame) {
+  protected function _filterSubjects($state, $subjects, $frame, $flags) {
     $rval = new stdClass();
     sort($subjects);
     foreach($subjects as $id) {
       $subject = $state->subjects->{$id};
-      if($this->_filterSubject($subject, $frame)) {
+      if($this->_filterSubject($subject, $frame, $flags)) {
         $rval->{$id} = $subject;
       }
     }
@@ -3879,10 +3888,11 @@ class JsonLdProcessor {
    *
    * @param stdClass $subject the subject to check.
    * @param stdClass $frame the frame to check.
+   * @param assoc $flags the frame flags.
    *
    * @return bool true if the subject matches, false if not.
    */
-  protected function _filterSubject($subject, $frame) {
+  protected function _filterSubject($subject, $frame, $flags) {
     // check @type (object value means 'any' type, fall through to ducktyping)
     if(property_exists($frame, '@type') &&
       !(count($frame->{'@type'}) === 1 && is_object($frame->{'@type'}[0]))) {
@@ -3897,14 +3907,47 @@ class JsonLdProcessor {
     }
 
     // check ducktype
+    $wildcard = true;
+    $matches_some = false;
     foreach($frame as $k => $v) {
-      // only not a duck if @id or non-keyword isn't in subject
-      if(($k === '@id' || !self::_isKeyword($k)) &&
-        !property_exists($subject, $k)) {
+      if(self::_isKeyword($k)) {
+        // skip non-@id and non-@type
+        if($k !== '@id' && $k !== '@type') {
+          continue;
+        }
+        $wildcard = false;
+
+        // check @id for a specific @id value
+        if($k === '@id' && is_string($v)) {
+          if(!property_exists($subject, $k) || $subject->{$k} !== $v) {
+            return false;
+          }
+          $matches_some = true;
+          continue;
+        }
+      }
+
+      $wildcard = false;
+
+      if(property_exists($subject, $k)) {
+        // $v === [] means do not match if property is present
+        if(is_array($v) && count($v) === 0) {
+          return false;
+        }
+        $matches_some = true;
+        continue;
+      }
+
+      // all properties must match to be a duck unless a @default is specified
+      $has_default = (is_array($v) && count($v) === 1 && is_object($v[0]) &&
+        property_exists($v[0], '@default'));
+      if($flags['requireAll'] && !$has_default) {
         return false;
       }
     }
-    return true;
+
+    // return true if wildcard or subject matches some properties
+    return $wildcard || $matches_some;
   }
 
   /**
@@ -5325,6 +5368,7 @@ class JsonLdProcessor {
     case '@list':
     case '@omitDefault':
     case '@preserve':
+    case '@requireAll':
     case '@reverse':
     case '@set':
     case '@type':
