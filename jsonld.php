@@ -2806,6 +2806,8 @@ class JsonLdProcessor {
   protected function _fromRDF($dataset, $options) {
     $default_graph = new stdClass();
     $graph_map = (object)array('@default' => $default_graph);
+    // TODO: seems like usages could be replaced by this single map
+    $node_references = (object)array();
 
     foreach($dataset as $name => $graph) {
       if(!property_exists($graph_map, $name)) {
@@ -2843,6 +2845,9 @@ class JsonLdProcessor {
         // object may be an RDF list/partial list node but we can't know
         // easily until all triples are read
         if($object_is_id) {
+          self::addValue(
+            $node_references, $o->value, $node->{'@id'}, array(
+              'propertyIsArray' => true));
           $object = $node_map->{$o->value};
           if(!property_exists($object, 'usages')) {
             $object->usages = array();
@@ -2872,13 +2877,16 @@ class JsonLdProcessor {
         $list_nodes = array();
 
         // ensure node is a well-formed list node; it must:
-        // 1. Be used only once in a list.
+        // 1. Be referenced only once and used only once in a list.
         // 2. Have an array for rdf:first that has 1 item.
         // 3. Have an array for rdf:rest that has 1 item.
         // 4. Have no keys other than: @id, usages, rdf:first, rdf:rest, and,
         //   optionally, @type where the value is rdf:List.
         $node_key_count = count(array_keys((array)$node));
-        while($property === self::RDF_REST && count($node->usages) === 1 &&
+        while($property === self::RDF_REST &&
+          property_exists($node_references, $node->{'@id'}) &&
+          count($node_references->{$node->{'@id'}}) === 1 &&
+          count($node->usages) === 1 &&
           property_exists($node, self::RDF_FIRST) &&
           property_exists($node, self::RDF_REST) &&
           is_array($node->{self::RDF_FIRST}) &&
