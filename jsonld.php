@@ -2809,8 +2809,7 @@ class JsonLdProcessor {
   protected function _fromRDF($dataset, $options) {
     $default_graph = new stdClass();
     $graph_map = (object)array('@default' => $default_graph);
-    // TODO: seems like usages could be replaced by this single map
-    $node_references = (object)array();
+    $referenced_once = (object)array();
 
     foreach($dataset as $name => $graph) {
       if(!property_exists($graph_map, $name)) {
@@ -2848,17 +2847,25 @@ class JsonLdProcessor {
         // object may be an RDF list/partial list node but we can't know
         // easily until all triples are read
         if($object_is_id) {
-          self::addValue(
-            $node_references, $o->value, $node->{'@id'}, array(
-              'propertyIsArray' => true));
-          $object = $node_map->{$o->value};
-          if(!property_exists($object, 'usages')) {
-            $object->usages = array();
+          if($o->value === self::RDF_NIL) {
+            $object = $node_map->{$o->value};
+            if(!property_exists($object, 'usages')) {
+              $object->usages = array();
+            }
+            $object->usages[] = (object)array(
+              'node' => $node,
+              'property' => $p,
+              'value' => $value);
+          } else if(property_exists($referenced_once, $o->value)) {
+            // object referenced more than once
+            $referenced_once->{$o->value} = false;
+          } else {
+            // track single reference
+            $referenced_once->{$o->value} = (object)array(
+              'node' => $node,
+              'property' => $p,
+              'value' => $value);
           }
-          $object->usages[] = (object)array(
-            'node' => $node,
-            'property' => $p,
-            'value' => $value);
         }
       }
     }
@@ -2880,23 +2887,22 @@ class JsonLdProcessor {
         $list_nodes = array();
 
         // ensure node is a well-formed list node; it must:
-        // 1. Be referenced only once and used only once in a list.
+        // 1. Be referenced only once.
         // 2. Have an array for rdf:first that has 1 item.
         // 3. Have an array for rdf:rest that has 1 item.
-        // 4. Have no keys other than: @id, usages, rdf:first, rdf:rest, and,
+        // 4. Have no keys other than: @id, rdf:first, rdf:rest, and,
         //   optionally, @type where the value is rdf:List.
         $node_key_count = count(array_keys((array)$node));
         while($property === self::RDF_REST &&
-          property_exists($node_references, $node->{'@id'}) &&
-          count($node_references->{$node->{'@id'}}) === 1 &&
-          count($node->usages) === 1 &&
+          property_exists($referenced_once, $node->{'@id'}) &&
+          is_object($referenced_once->{$node->{'@id'}}) &&
           property_exists($node, self::RDF_FIRST) &&
           property_exists($node, self::RDF_REST) &&
           is_array($node->{self::RDF_FIRST}) &&
           is_array($node->{self::RDF_REST}) &&
           count($node->{self::RDF_FIRST}) === 1 &&
           count($node->{self::RDF_REST}) === 1 &&
-          ($node_key_count === 4 || ($node_key_count === 5 &&
+          ($node_key_count === 3 || ($node_key_count === 4 &&
             property_exists($node, '@type') && is_array($node->{'@type'}) &&
             count($node->{'@type'}) === 1 &&
             $node->{'@type'}[0] === self::RDF_LIST))) {
@@ -2904,7 +2910,7 @@ class JsonLdProcessor {
           $list_nodes[] = $node->{'@id'};
 
           // get next node, moving backwards through list
-          $usage = $node->usages[0];
+          $usage = $referenced_once->{$node->{'@id'}};
           $node = $usage->node;
           $property = $usage->property;
           $head = $usage->value;
@@ -2938,6 +2944,8 @@ class JsonLdProcessor {
           unset($graph_object->{$list_node});
         }
       }
+
+      unset($nil->usages);
     }
 
     $result = array();
@@ -2952,14 +2960,12 @@ class JsonLdProcessor {
         sort($subjects_);
         foreach($subjects_ as $subject_) {
           $node_ = $graph_object->{$subject_};
-          unset($node_->usages);
           // only add full subjects to top-level
           if(!self::_isSubjectReference($node_)) {
             $node->{'@graph'}[] = $node_;
           }
         }
       }
-      unset($node->usages);
       // only add full subjects to top-level
       if(!self::_isSubjectReference($node)) {
         $result[] = $node;
