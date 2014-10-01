@@ -2050,6 +2050,15 @@ class JsonLdProcessor {
           continue;
         }
 
+        // skip array processing for keywords that aren't @graph or @list
+        if($expanded_property !== '@graph' && $expanded_property !== '@list' &&
+          self::_isKeyword($expanded_property)) {
+          // use keyword alias and add value as is
+          $alias = $this->_compactIri($active_ctx, $expanded_property);
+          self::addValue($rval, $alias, $expanded_value);
+          continue;
+        }
+
         // Note: expanded value must be an array due to expansion algorithm.
 
         // preserve empty arrays
