@@ -5094,8 +5094,8 @@ class JsonLdProcessor {
                 if(is_array($ctx)) {
                   // add flattened context
                   array_splice($v, $i, 1, $ctx);
-                  $i += count($ctx);
-                  $length += count($ctx);
+                  $i += count($ctx) - 1;
+                  $length = count($v);
                 } else {
                   $v[$i] = $ctx;
                 }
