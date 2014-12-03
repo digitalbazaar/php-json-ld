@@ -506,59 +506,45 @@ function jsonld_parse_url($url) {
     $url = '';
   }
 
-  $rval = parse_url($url);
+  $keys = array(
+    'href', 'protocol', 'scheme', '?authority', 'authority',
+    '?auth', 'auth', 'user', 'pass', 'host', '?port', 'port', 'path',
+    '?query', 'query', '?fragment', 'fragment');
+  $regex = "/^(([^:\/?#]+):)?(\/\/(((([^:@]*)(?::([^:@]*))?)?@)?([^:\/?#]*)(:(\d*))?))?([^?#]*)(\?([^#]*))?(#(.*))?/";
+  preg_match($regex, $url, $match);
 
-  // malformed url
-  if($rval === false) {
-    $rval = array();
-  }
-
-  $rval['href'] = $url;
-  if(!isset($rval['scheme'])) {
-    $rval['scheme'] = '';
-    $rval['protocol'] = '';
-  } else {
-    $rval['protocol'] = $rval['scheme'] . ':';
-  }
-  if(!isset($rval['host'])) {
-    $rval['host'] = '';
-  }
-  if(!isset($rval['path'])) {
-    $rval['path'] = '';
-  }
-  if(isset($rval['user']) || isset($rval['pass'])) {
-    $rval['auth'] = '';
-    if(isset($rval['user'])) {
-      $rval['auth'] = $rval['user'];
-    }
-    if(isset($rval['pass'])) {
-      $rval['auth'] .= ":{$rval['pass']}";
-    }
-  }
-  // parse authority for unparsed relative network-path reference
-  if(strpos($rval['href'], ':') === false &&
-    strpos($rval['href'], '//') === 0 && $rval['host'] === '') {
-    // must parse authority from pathname
-    $rval['path'] = substr($rval['path'], 2);
-    $idx = strpos($rval['path'], '/');
-    if($idx === false) {
-      $rval['authority'] = $rval['path'];
-      $rval['path'] = '';
+  $rval = array();
+  $flags = array();
+  $len = count($keys);
+  for($i = 0; $i < $len; ++$i) {
+    $key = $keys[$i];
+    if(strpos($key, '?') === 0) {
+      $flags[substr($key, 1)] = !empty($match[$i]);
+    } else if(!isset($match[$i])) {
+      $rval[$key] = null;
     } else {
-      $rval['authority'] = substr($rval['path'], 0, $idx);
-      $rval['path'] = substr($rval['path'], $idx);
-    }
-  } else {
-    $rval['authority'] = $rval['host'];
-    if(isset($rval['port'])) {
-      $rval['authority'] .= ":{$rval['port']}";
-    }
-    if(isset($rval['auth'])) {
-      $rval['authority'] = "{$rval['auth']}@{$rval['authority']}";
+      $rval[$key] = $match[$i];
     }
   }
+
+  if(!$flags['authority']) {
+    $rval['authority'] = null;
+  }
+  if(!$flags['auth']) {
+    $rval['auth'] = $rval['user'] = $rval['pass'] = null;
+  }
+  if(!$flags['port']) {
+    $rval['port'] = null;
+  }
+  if(!$flags['query']) {
+    $rval['query'] = null;
+  }
+  if(!$flags['fragment']) {
+    $rval['fragment'] = null;
+  }
+
   $rval['normalizedPath'] = jsonld_remove_dot_segments(
-    $rval['path'], $rval['authority'] !== '');
+    $rval['path'], !!$rval['authority']);
 
   return $rval;
 }
@@ -628,47 +614,66 @@ function jsonld_prepend_base($base, $iri) {
   // parse given IRI
   $rel = jsonld_parse_url($iri);
 
-  // start hierarchical part
-  $hierPart = $base['protocol'];
-  if($rel['authority']) {
-    $hierPart .= "//{$rel['authority']}";
-  } else if($base['href'] !== '') {
-    $hierPart .= "//{$base['authority']}";
-  }
+  // per RFC3986 5.2.2
+  $transform = array('protocol' => $base['protocol']);
 
-  // per RFC3986 normalize
-
-  // IRI represents an absolute path
-  if(strpos($rel['path'], '/') === 0) {
-    $path = $rel['path'];
+  if($rel['authority'] !== null) {
+    $transform['authority'] = $rel['authority'];
+    $transform['path'] = $rel['path'];
+    $transform['query'] = $rel['query'];
   } else {
-    $path = $base['path'];
+    $transform['authority'] = $base['authority'];
 
-    // append relative path to the end of the last directory from base
-    if($rel['path'] !== '') {
-      $idx = strrpos($path, '/');
-      $idx = ($idx === false) ? 0 : $idx + 1;
-      $path = substr($path, 0, $idx);
-      if(strlen($path) > 0 && substr($path, -1) !== '/') {
-        $path .= '/';
+    if($rel['path'] === '') {
+      $transform['path'] = $base['path'];
+      if($rel['query'] !== null) {
+        $transform['query'] = $rel['query'];
+      } else {
+        $transform['query'] = $base['query'];
       }
-      $path .= $rel['path'];
+    } else {
+      if(strpos($rel['path'], '/') === 0) {
+        // IRI represents an absolute path
+        $transform['path'] = $rel['path'];
+      } else {
+        // merge paths
+        $path = $base['path'];
+
+        // append relative path to the end of the last directory from base
+        if($rel['path'] !== '') {
+          $idx = strrpos($path, '/');
+          $idx = ($idx === false) ? 0 : $idx + 1;
+          $path = substr($path, 0, $idx);
+          if(strlen($path) > 0 && substr($path, -1) !== '/') {
+            $path .= '/';
+          }
+          $path .= $rel['path'];
+        }
+
+        $transform['path'] = $path;
+      }
+      $transform['query'] = $rel['query'];
     }
   }
 
   // remove slashes and dots in path
-  $path = jsonld_remove_dot_segments($path, $hierPart !== '');
+  $transform['path'] = jsonld_remove_dot_segments(
+    $transform['path'], !!$transform['authority']);
 
-  // add query and hash
-  if(isset($rel['query'])) {
-    $path .= "?{$rel['query']}";
+  // construct URL
+  $rval = $transform['protocol'];
+  if($transform['authority'] !== null) {
+    $rval .= '//' . $transform['authority'];
   }
-  if(isset($rel['fragment'])) {
-    $path .= "#{$rel['fragment']}";
+  $rval .= $transform['path'];
+  if($transform['query'] !== null) {
+    $rval .= '?' . $transform['query'];
+  }
+  if($rel['fragment'] !== null) {
+    $rval .= '#' . $rel['fragment'];
   }
 
-  $rval = $hierPart . $path;
-
+  // handle empty base
   if($rval === '') {
     $rval = './';
   }
@@ -716,7 +721,7 @@ function jsonld_remove_base($base, $iri) {
   // is a hash or query)
   $base_segments = explode('/', $base['normalizedPath']);
   $iri_segments = explode('/', $rel['normalizedPath']);
-  $last = (isset($rel['query']) || isset($rel['fragment'])) ? 0 : 1;
+  $last = ($rel['query'] || $rel['fragment']) ? 0 : 1;
   while(count($base_segments) > 0 && count($iri_segments) > $last) {
     if($base_segments[0] !== $iri_segments[0]) {
       break;
@@ -740,10 +745,10 @@ function jsonld_remove_base($base, $iri) {
   $rval .= implode('/', $iri_segments);
 
   // add query and hash
-  if(isset($rel['query'])) {
+  if($rel['query'] !== null) {
     $rval .= "?{$rel['query']}";
   }
-  if(isset($rel['fragment'])) {
+  if($rel['fragment'] !== null) {
     $rval .= "#{$rel['fragment']}";
   }
 
