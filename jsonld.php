@@ -106,6 +106,31 @@ function jsonld_frame($input, $frame, $options=array()) {
 }
 
 /**
+ * **Experimental**
+ *
+ * Links a JSON-LD document's nodes in memory.
+ *
+ * @param mixed $input the JSON-LD document to link.
+ * @param mixed $ctx the JSON-LD context to apply or null.
+ * @param assoc [$options] the options to use:
+ *          [base] the base IRI to use.
+ *          [expandContext] a context to expand with.
+ *          [documentLoader(url)] the document loader.
+ *
+ * @return the linked JSON-LD output.
+ */
+function jsonld_link($input, $ctx, $options) {
+  // API matches running frame with a wildcard frame and embed: '@link'
+  // get arguments
+  $frame = new stdClass();
+  if($ctx) {
+    $frame->{'@context'} = $ctx;
+  }
+  $frame->{'@embed'} = '@link';
+  return jsonld_frame($input, $frame, $options);
+};
+
+/**
  * Performs RDF dataset normalization on the given JSON-LD input. The output
  * is an RDF dataset unless the 'format' option is used.
  *
@@ -827,7 +852,13 @@ class JsonLdProcessor {
       'graph' => false,
       'skipExpansion' => false,
       'activeCtx' => false,
-      'documentLoader' => $jsonld_default_load_document));
+      'documentLoader' => $jsonld_default_load_document,
+      'link' => false));
+    if($options['link']) {
+      // force skip expansion when linking, "link" is not part of the
+      // public API, it should only be called from framing
+      $options['skipExpansion'] = true;
+    }
 
     if($options['skipExpansion'] === true) {
       $expanded = $input;
@@ -1080,7 +1111,8 @@ class JsonLdProcessor {
    * @param $options the framing options.
    *          [base] the base IRI to use.
    *          [expandContext] a context to expand with.
-   *          [embed] default @embed flag (default: true).
+   *          [embed] default @embed flag: '@last', '@always', '@never', '@link'
+   *            (default: '@last').
    *          [explicit] default @explicit flag (default: false).
    *          [requireAll] default @requireAll flag (default: true).
    *          [omitDefault] default @omitDefault flag (default: false).
@@ -1093,7 +1125,7 @@ class JsonLdProcessor {
     self::setdefaults($options, array(
       'base' => is_string($input) ? $input : '',
       'compactArrays' => true,
-      'embed' => true,
+      'embed' => '@last',
       'explicit' => false,
       'requireAll' => true,
       'omitDefault' => false,
@@ -1165,9 +1197,11 @@ class JsonLdProcessor {
     $framed = $this->_frame($expanded, $expanded_frame, $options);
 
     try {
-      // compact result (force @graph option to true)
+      // compact result (force @graph option to true, skip expansion, check
+      // for linked embeds)
       $options['graph'] = true;
       $options['skipExpansion'] = true;
+      $options['link'] = new ArrayObject();
       $options['activeCtx'] = true;
       $result = $this->compact($framed, $ctx, $options);
     } catch(Exception $e) {
@@ -1182,6 +1216,7 @@ class JsonLdProcessor {
     // get graph alias
     $graph = $this->_compactIri($active_ctx, '@graph');
     // remove @preserve from results
+    $options['link'] = new ArrayObject();
     $compacted->{$graph} = $this->_removePreserve(
       $active_ctx, $compacted->{$graph}, $options);
     return $compacted;
@@ -1968,18 +2003,48 @@ class JsonLdProcessor {
 
     // recursively compact object
     if(is_object($element)) {
+      if($options['link'] && property_exists($element, '@id') &&
+        isset($options['link'][$element->{'@id'}])) {
+        // check for a linked element to reuse
+        $linked = $options['link'][$element->{'@id'}];
+        foreach($linked as $link) {
+          if($link['expanded'] === $element) {
+            return $link['compacted'];
+          }
+        }
+      }
+
       // do value compaction on @values and subject references
       if(self::_isValue($element) || self::_isSubjectReference($element)) {
-        return $this->_compactValue($active_ctx, $active_property, $element);
+        $rval = $this->_compactValue($active_ctx, $active_property, $element);
+        if($options['link'] && self::_isSubjectReference($element)) {
+          // store linked element
+          if(!isset($options['link'][$element->{'@id'}])) {
+            $options['link'][$element->{'@id'}] = array();
+          }
+          $options['link'][$element->{'@id'}][] = array(
+            'expanded' => $element, 'compacted' => $rval);
+        }
+        return $rval;
       }
 
       // FIXME: avoid misuse of active property as an expanded property?
       $inside_reverse = ($active_property === '@reverse');
 
+      $rval = new stdClass();
+
+      if($options['link'] && property_exists($element, '@id')) {
+        // store linked element
+        if(!isset($options['link'][$element->{'@id'}])) {
+          $options['link'][$element->{'@id'}] = array();
+        }
+        $options['link'][$element->{'@id'}][] = array(
+          'expanded' => $element, 'compacted' => $rval);
+      }
+
       // process element keys in order
       $keys = array_keys((array)$element);
       sort($keys);
-      $rval = new stdClass();
       foreach($keys as $expanded_property) {
         $expanded_value = $element->{$expanded_property};
 
@@ -2643,7 +2708,9 @@ class JsonLdProcessor {
       'options' => $options,
       'graphs' => (object)array(
         '@default' => new stdClass(),
-        '@merged' => new stdClass()));
+        '@merged' => new stdClass()),
+      'subjectStack' => array(),
+      'link' => new stdClass());
 
     // produce a map of all graphs and name each bnode
     // FIXME: currently uses subjects from @merged graph only
@@ -3699,157 +3766,187 @@ class JsonLdProcessor {
   protected function _matchFrame(
     $state, $subjects, $frame, $parent, $property) {
     // validate the frame
-    $this->_validateFrame($state, $frame);
+    $this->_validateFrame($frame);
     $frame = $frame[0];
 
     // get flags for current frame
     $options = $state->options;
-    $embed_on = $this->_getFrameFlag($frame, $options, 'embed');
-    $explicit_on = $this->_getFrameFlag($frame, $options, 'explicit');
-    $require_all_on = $this->_getFrameFlag($frame, $options, 'requireAll');
     $flags = array(
-      'embed' => $embed_on,
-      'explicit' => $explicit_on,
-      'requireAll' => $require_all_on);
+      'embed' => $this->_getFrameFlag($frame, $options, 'embed'),
+      'explicit' => $this->_getFrameFlag($frame, $options, 'explicit'),
+      'requireAll' => $this->_getFrameFlag($frame, $options, 'requireAll'));
 
     // filter out subjects that match the frame
     $matches = $this->_filterSubjects($state, $subjects, $frame, $flags);
 
     // add matches to output
     foreach($matches as $id => $subject) {
-      /* Note: In order to treat each top-level match as a compartmentalized
-      result, create an independent copy of the embedded subjects map when the
-      property is null, which only occurs at the top-level. */
-      if($property === null) {
-        $state->embeds = new stdClass();
+      if($flags['embed'] === '@link' && property_exists($state->link, $id)) {
+        // TODO: may want to also match an existing linked subject against
+        // the current frame ... so different frames could produce different
+        // subjects that are only shared in-memory when the frames are the same
+
+        // add existing linked subject
+        $this->_addFrameOutput($parent, $property, $state->link->{$id});
+        continue;
       }
 
-      // start output
+      /* Note: In order to treat each top-level match as a compartmentalized
+      result, clear the unique embedded subjects map when the property is null,
+      which only occurs at the top-level. */
+      if($property === null) {
+        $state->uniqueEmbeds = new stdClass();
+      }
+
+      // start output for subject
       $output = new stdClass();
       $output->{'@id'} = $id;
+      $state->link->{$id} = $output;
 
-      // prepare embed meta info
-      $embed = (object)array('parent' => $parent, 'property' => $property);
+      // if embed is @never or if a circular reference would be created by an
+      // embed, the subject cannot be embedded, just add the reference;
+      // note that a circular reference won't occur when the embed flag is
+      // `@link` as the above check will short-circuit before reaching this point
+      if($flags['embed'] === '@never' ||
+        $this->_createsCircularReference($subject, $state->subjectStack)) {
+        $this->_addFrameOutput($parent, $property, $output);
+        continue;
+      }
 
-      // if embed is on and there is an existing embed
-      if($embed_on && property_exists($state->embeds, $id)) {
-        // only overwrite an existing embed if it has already been added to its
-        // parent -- otherwise its parent is somewhere up the tree from this
-        // embed and the embed would occur twice once the tree is added
-        $embed_on = false;
-
-        // existing embed's parent is an array
-        $existing = $state->embeds->{$id};
-        if(is_array($existing->parent)) {
-          foreach($existing->parent as $p) {
-            if(self::compareValues($output, $p)) {
-              $embed_on = true;
-              break;
-            }
-          }
-        } else if(self::hasValue(
-          $existing->parent, $existing->property, $output)) {
-          // existing embed's parent is an object
-          $embed_on = true;
-        }
-
-        // existing embed has already been added, so allow an overwrite
-        if($embed_on) {
+      // if only the last match should be embedded
+      if($flags['embed'] === '@last') {
+        // remove any existing embed
+        if(property_exists($state->uniqueEmbeds, $id)) {
           $this->_removeEmbed($state, $id);
         }
+        $state->uniqueEmbeds->{$id} = array(
+          'parent' => $parent, 'property' => $property);
       }
 
-      // not embedding, add output without any other properties
-      if(!$embed_on) {
-        $this->_addFrameOutput($state, $parent, $property, $output);
-      } else {
-        // add embed meta info
-        $state->embeds->{$id} = $embed;
+      // push matching subject onto stack to enable circular embed checks
+      $state->subjectStack[] = $subject;
 
-        // iterate over subject properties
-        $props = array_keys((array)$subject);
-        sort($props);
-        foreach($props as $prop) {
-          // copy keywords to output
-          if(self::_isKeyword($prop)) {
-            $output->{$prop} = self::copy($subject->{$prop});
-            continue;
-          }
+      // iterate over subject properties
+      $props = array_keys((array)$subject);
+      sort($props);
+      foreach($props as $prop) {
+        // copy keywords to output
+        if(self::_isKeyword($prop)) {
+          $output->{$prop} = self::copy($subject->{$prop});
+          continue;
+        }
 
-          // if property isn't in the frame
-          if(!property_exists($frame, $prop)) {
-            // if explicit is off, embed values
-            if(!$explicit_on) {
-              $this->_embedValues($state, $subject, $prop, $output);
-            }
-            continue;
-          }
+        // explicit is on and property isn't in the frame, skip processing
+        if($flags['explicit'] && !property_exists($frame, $prop)) {
+          continue;
+        }
 
-          // add objects
-          $objects = $subject->{$prop};
-          foreach($objects as $o) {
-            // recurse into list
-            if(self::_isList($o)) {
-              // add empty list
-              $list = (object)array('@list' => array());
-              $this->_addFrameOutput($state, $output, $prop, $list);
+        // add objects
+        $objects = $subject->{$prop};
+        foreach($objects as $o) {
+          // recurse into list
+          if(self::_isList($o)) {
+            // add empty list
+            $list = (object)array('@list' => array());
+            $this->_addFrameOutput($output, $prop, $list);
 
-              // add list objects
-              $src = $o->{'@list'};
-              foreach($src as $o) {
-                if(self::_isSubjectReference($o)) {
-                  // recurse into subject reference
-                  $this->_matchFrame(
-                    $state, array($o->{'@id'}), $frame->{$prop}[0]->{'@list'},
-                    $list, '@list');
-                } else {
-                  // include other values automatically
-                  $this->_addFrameOutput(
-                    $state, $list, '@list', self::copy($o));
-                }
+            // add list objects
+            $src = $o->{'@list'};
+            foreach($src as $o) {
+              if(self::_isSubjectReference($o)) {
+                // recurse into subject reference
+                $subframe = (property_exists($frame, $prop) ?
+                  $frame->{$prop}[0]->{'@list'} :
+                  $this->_createImplicitFrame($flags));
+                $this->_matchFrame(
+                  $state, array($o->{'@id'}), $subframe, $list, '@list');
+              } else {
+                // include other values automatically
+                $this->_addFrameOutput($list, '@list', self::copy($o));
               }
-              continue;
             }
-
-            if(self::_isSubjectReference($o)) {
-              // recurse into subject reference
-              $this->_matchFrame(
-                $state, array($o->{'@id'}), $frame->{$prop}, $output, $prop);
-            } else {
-              // include other values automatically
-              $this->_addFrameOutput($state, $output, $prop, self::copy($o));
-            }
-          }
-        }
-
-        // handle defaults
-        $props = array_keys((array)$frame);
-        sort($props);
-        foreach($props as $prop) {
-          // skip keywords
-          if(self::_isKeyword($prop)) {
             continue;
           }
 
-          // if omit default is off, then include default values for properties
-          // that appear in the next frame but are not in the matching subject
-          $next = $frame->{$prop}[0];
-          $omit_default_on = $this->_getFrameFlag(
-            $next, $options, 'omitDefault');
-          if(!$omit_default_on && !property_exists($output, $prop)) {
-            $preserve = '@null';
-            if(property_exists($next, '@default')) {
-              $preserve = self::copy($next->{'@default'});
-            }
-            $preserve = self::arrayify($preserve);
-            $output->{$prop} = array((object)array('@preserve' => $preserve));
+          if(self::_isSubjectReference($o)) {
+            // recurse into subject reference
+            $subframe = (property_exists($frame, $prop) ?
+              $frame->{$prop} : $this->_createImplicitFrame($flags));
+            $this->_matchFrame(
+              $state, array($o->{'@id'}), $subframe, $output, $prop);
+          } else {
+            // include other values automatically
+            $this->_addFrameOutput($output, $prop, self::copy($o));
           }
         }
+      }
 
-        // add output to parent
-        $this->_addFrameOutput($state, $parent, $property, $output);
+      // handle defaults
+      $props = array_keys((array)$frame);
+      sort($props);
+      foreach($props as $prop) {
+        // skip keywords
+        if(self::_isKeyword($prop)) {
+          continue;
+        }
+
+        // if omit default is off, then include default values for properties
+        // that appear in the next frame but are not in the matching subject
+        $next = $frame->{$prop}[0];
+        $omit_default_on = $this->_getFrameFlag(
+          $next, $options, 'omitDefault');
+        if(!$omit_default_on && !property_exists($output, $prop)) {
+          $preserve = '@null';
+          if(property_exists($next, '@default')) {
+            $preserve = self::copy($next->{'@default'});
+          }
+          $preserve = self::arrayify($preserve);
+          $output->{$prop} = array((object)array('@preserve' => $preserve));
+        }
+      }
+
+      // add output to parent
+      $this->_addFrameOutput($parent, $property, $output);
+
+      // pop matching subject from circular ref-checking stack
+      array_pop($state->subjectStack);
+    }
+  }
+
+  /**
+   * Creates an implicit frame when recursing through subject matches. If
+   * a frame doesn't have an explicit frame for a particular property, then
+   * a wildcard child frame will be created that uses the same flags that the
+   * parent frame used.
+   *
+   * @param assoc flags the current framing flags.
+   *
+   * @return array the implicit frame.
+   */
+  function _createImplicitFrame($flags) {
+    $frame = new stdClass();
+    foreach($flags as $key => $value) {
+      $frame->{'@' . $key} = array($flags[$key]);
+    }
+    return array($frame);
+  }
+
+  /**
+   * Checks the current subject stack to see if embedding the given subject
+   * would cause a circular reference.
+   *
+   * @param stdClass subject_to_embed the subject to embed.
+   * @param assoc subject_stack the current stack of subjects.
+   *
+   * @return bool true if a circular reference would be created, false if not.
+   */
+  function _createsCircularReference($subject_to_embed, $subject_stack) {
+    for($i = count($subject_stack) - 1; $i >= 0; --$i) {
+      if($subject_stack[$i]->{'@id'} === $subject_to_embed->{'@id'}) {
+        return true;
       }
     }
+    return false;
   }
 
   /**
@@ -3863,17 +3960,31 @@ class JsonLdProcessor {
    */
   protected function _getFrameFlag($frame, $options, $name) {
     $flag = "@$name";
-    return (property_exists($frame, $flag) ?
+    $rval = (property_exists($frame, $flag) ?
       $frame->{$flag}[0] : $options[$name]);
+    if($name === 'embed') {
+      // default is "@last"
+      // backwards-compatibility support for "embed" maps:
+      // true => "@last"
+      // false => "@never"
+      if($rval === true) {
+        $rval = '@last';
+      } else if($rval === false) {
+        $rval = '@never';
+      } else if($rval !== '@always' && $rval !== '@never' &&
+        $rval !== '@link') {
+        $rval = '@last';
+      }
+    }
+    return $rval;
   }
 
   /**
    * Validates a JSON-LD frame, throwing an exception if the frame is invalid.
    *
-   * @param stdClass $state the current frame state.
    * @param array $frame the frame to validate.
    */
-  protected function _validateFrame($state, $frame) {
+  protected function _validateFrame($frame) {
     if(!is_array($frame) || count($frame) !== 1 || !is_object($frame[0])) {
       throw new JsonLdException(
         'Invalid JSON-LD syntax; a JSON-LD frame must be a single object.',
@@ -3971,58 +4082,6 @@ class JsonLdProcessor {
   }
 
   /**
-   * Embeds values for the given subject and property into the given output
-   * during the framing algorithm.
-   *
-   * @param stdClass $state the current framing state.
-   * @param stdClass $subject the subject.
-   * @param string $property the property.
-   * @param mixed $output the output.
-   */
-  protected function _embedValues($state, $subject, $property, $output) {
-    // embed subject properties in output
-    $objects = $subject->{$property};
-    foreach($objects as $o) {
-      // recurse into @list
-      if(self::_isList($o)) {
-        $list = (object)array('@list' => new ArrayObject());
-        $this->_addFrameOutput($state, $output, $property, $list);
-        $this->_embedValues($state, $o, '@list', $list->{'@list'});
-        $list->{'@list'} = (array)$list->{'@list'};
-        return;
-      }
-
-      // handle subject reference
-      if(self::_isSubjectReference($o)) {
-        $id = $o->{'@id'};
-
-        // embed full subject if isn't already embedded
-        if(!property_exists($state->embeds, $id)) {
-          // add embed
-          $embed = (object)array('parent' => $output, 'property' => $property);
-          $state->embeds->{$id} = $embed;
-
-          // recurse into subject
-          $o = new stdClass();
-          $s = $state->subjects->{$id};
-          foreach($s as $prop => $v) {
-            // copy keywords
-            if(self::_isKeyword($prop)) {
-              $o->{$prop} = self::copy($v);
-              continue;
-            }
-            $this->_embedValues($state, $s, $prop, $o);
-          }
-        }
-        $this->_addFrameOutput($state, $output, $property, $o);
-      } else {
-        // copy non-subject value
-        $this->_addFrameOutput($state, $output, $property, self::copy($o));
-      }
-    }
-  }
-
-  /**
    * Removes an existing embed.
    *
    * @param stdClass $state the current framing state.
@@ -4030,7 +4089,7 @@ class JsonLdProcessor {
    */
   protected function _removeEmbed($state, $id) {
     // get existing embed
-    $embeds = $state->embeds;
+    $embeds = $state->uniqueEmbeds;
     $embed = $embeds->{$id};
     $property = $embed->property;
 
@@ -4074,12 +4133,11 @@ class JsonLdProcessor {
   /**
    * Adds framing output to the given parent.
    *
-   * @param stdClass $state the current framing state.
    * @param mixed $parent the parent to add to.
    * @param string $property the parent property.
    * @param mixed $output the output to add.
    */
-  protected function _addFrameOutput($state, $parent, $property, $output) {
+  protected function _addFrameOutput($parent, $property, $output) {
     if(is_object($parent) && !($parent instanceof ArrayObject)) {
       self::addValue(
         $parent, $property, $output, array('propertyIsArray' => true));
@@ -4128,6 +4186,25 @@ class JsonLdProcessor {
         $input->{'@list'} = $this->_removePreserve(
           $ctx, $input->{'@list'}, $options);
         return $input;
+      }
+
+      // handle in-memory linked nodes
+      $id_alias = $this->_compactIri($ctx, '@id');
+      if(property_exists($input, $id_alias)) {
+        $id = $input->{$id_alias};
+        if(isset($options['link'][$id])) {
+          $idx = array_search($input, $options['link'][$id]);
+          if($idx === false) {
+            // prevent circular visitation
+            $options['link'][$id][] = $input;
+          } else {
+            // already visited
+            return $options['link'][$id][$idx];
+          }
+        } else {
+          // prevent circular visitation
+          $options['link'][$id] = [$input];
+        }
       }
 
       // recurse through properties
