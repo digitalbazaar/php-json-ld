@@ -295,7 +295,7 @@ class JsonLdTest {
         if(property_exists($options, 'redirectTo') &&
           property_exists($options, 'httpStatus') &&
           $options->httpStatus >= '300') {
-          $doc->documentUrl = ($test->manifest->data->{'baseIri'} .
+          $doc->documentUrl = ($test->manifest->data->baseIri .
             $options->redirectTo);
         } else if(property_exists($options, 'httpLink')) {
           $content_type = (property_exists($options, 'contentType') ?
@@ -318,15 +318,23 @@ class JsonLdTest {
             if(is_array($link_header)) {
               throw new Exception('multiple context link headers');
             }
-            $doc->{'contextUrl'} = $link_header->target;
+            $doc->contextUrl = $link_header->target;
           }
         }
       }
       global $ROOT_MANIFEST_DIR;
-      $filename = $ROOT_MANIFEST_DIR .
-        substr($doc->{'documentUrl'}, strlen($base));
+      if(strpos($doc->documentUrl, ':') === false) {
+        $filename = join(
+          DIRECTORY_SEPARATOR, array(
+            $ROOT_MANIFEST_DIR, $doc->documentUrl));
+        $doc->documentUrl = 'file://' . $filename;
+      } else {
+        $filename = join(
+          DIRECTORY_SEPARATOR, array(
+            $ROOT_MANIFEST_DIR, substr($doc->documentUrl, strlen($base))));
+      }
       try {
-        $doc->{'document'} = Util::readJson($filename);
+        $doc->document = Util::readJson($filename);
       } catch(Exception $e) {
         throw new Exception('loading document failed');
       }
@@ -335,7 +343,7 @@ class JsonLdTest {
 
     $local_loader = function($url) use ($test, $base, $load_locally) {
       // always load remote-doc and non-base tests remotely
-      if(strpos($url, $base) !== 0 ||
+      if((strpos($url, $base) !== 0 && strpos($url, ':') !== false) ||
         $test->manifest->data->name === 'Remote document') {
         return call_user_func('jsonld_default_document_loader', $url);
       }
