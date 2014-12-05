@@ -4203,7 +4203,7 @@ class JsonLdProcessor {
           }
         } else {
           // prevent circular visitation
-          $options['link'][$id] = [$input];
+          $options['link'][$id] = array($input);
         }
       }
 
