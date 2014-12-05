@@ -1,3 +1,10 @@
+php-json-ld
+===========
+
+[![Build Status][travis-ci-png]][travis-ci-site]
+[travis-ci-png]: https://travis-ci.org/digitalbazaar/php-json-ld.png?branch=master
+[travis-ci-site]: https://travis-ci.org/digitalbazaar/php-json-ld
+
 Introduction
 ------------
 
