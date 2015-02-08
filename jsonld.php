@@ -2382,6 +2382,10 @@ class JsonLdProcessor {
 
       // @language must be a string
       if($expanded_property === '@language') {
+        if($value === null) {
+          // drop null @language values, they expand as if they didn't exist
+          continue;
+        }
         if(!is_string($value)) {
           throw new JsonLdException(
             'Invalid JSON-LD syntax; "@language" value must not be a string.',
