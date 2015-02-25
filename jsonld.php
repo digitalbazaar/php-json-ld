@@ -4095,10 +4095,10 @@ class JsonLdProcessor {
     // get existing embed
     $embeds = $state->uniqueEmbeds;
     $embed = $embeds->{$id};
-    $property = $embed->property;
+    $property = $embed['property'];
 
     // create reference to replace embed
-    $subject = (object)array('@id' => id);
+    $subject = (object)array('@id' => $id);
 
     // remove existing embed
     if(is_array($embed->parent)) {
