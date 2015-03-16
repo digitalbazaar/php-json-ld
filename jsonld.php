@@ -3695,9 +3695,9 @@ class JsonLdProcessor {
 
       // copy non-@type keywords
       if($property !== '@type' && self::_isKeyword($property)) {
-        if($property === '@index' && property_exists($subject, '@index')
-        && ($input->{'@index'} !== $subject->{'@index'}
-           || $input->{'@index'}->{'@id'} !== $subject->{'@index'}->{'@id'})) {
+        if($property === '@index' && property_exists($subject, '@index') &&
+          ($input->{'@index'} !== $subject->{'@index'} ||
+          $input->{'@index'}->{'@id'} !== $subject->{'@index'}->{'@id'})) {
           throw new JsonLdException(
             'Invalid JSON-LD syntax; conflicting @index property detected.',
             'jsonld.SyntaxError', 'conflicting indexes',
