@@ -106,31 +106,48 @@ jsonld_set_document_loader('jsonld_default_secure_document_loader');
 // set a default custom document loader
 jsonld_set_document_loader('my_custom_doc_loader');
 
-// a custom loader that demonstrates checking a simple in-memory cache
-// before falling back to the default loader
+// a custom loader that demonstrates using a simple in-memory mock for
+// certain contexts before falling back to the default loader
 // note: if you want to set this loader as the new default, you'll need to
 // store the previous default in another variable first and access that inside
 // the loader
-global $cache;
-$cache = array('http://example.com/mycontext' => (object)array(
+global $mocks;
+$mocks = array('http://example.com/mycontext' => (object)array(
   'hombre' => 'http://schema.org/name'));
-
-function custom_load($url) {
-  global $jsonld_default_load_document, $cache;
-  if(isset($cache[$url])) {
+function mock_load($url) {
+  global $jsonld_default_load_document, $mocks;
+  if(isset($mocks[$url])) {
     // return a "RemoteDocument", it has these three properties:
     return (object)array(
       'contextUrl' => null,
-      'document' => $cache[$url],
+      'document' => $mocks[$url],
       'documentUrl' => $url);
   }
   // use default loader
   return call_user_func($jsonld_default_load_document, $url);
 }
 
-// use the custom loader for just this call, witout modifying the default one
+// use the mock loader for just this call, witout modifying the default one
 $compacted = jsonld_compact($foo, 'http://example.com/mycontext', array(
-  'documentLoader' => 'custom_load'));
+  'documentLoader' => 'mock_load'));
+
+// a custom loader that uses a simplistic in-memory cache (no invalidation)
+global $cache;
+$cache = array();
+function cache_load($url) {
+  global $jsonld_default_load_document, $cache;
+  if(isset($cache[$url])) {
+    return $cache[$url];
+  }
+  // use default loader
+  $doc = call_user_func($jsonld_default_load_document, $url);
+  $cache[$url] = $doc;
+  return $doc;
+}
+
+// use the cache loader for just this call, witout modifying the default one
+$compacted = jsonld_compact($foo, 'http://schema.org', array(
+  'documentLoader' => 'cache_load'));
 ```
 
 Commercial Support
