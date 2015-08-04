@@ -98,6 +98,39 @@ $framed = jsonld_frame($doc, $frame);
 $normalized = jsonld_normalize($doc, array('format' => 'application/nquads'));
 // normalized is a string that is a canonical representation of the document
 // that can be used for hashing
+
+// force HTTPS-only context loading:
+// use built-in secure document loader
+jsonld_set_document_loader('jsonld_default_secure_document_loader');
+
+// set a default custom document loader
+jsonld_set_document_loader('my_custom_doc_loader');
+
+// a custom loader that demonstrates checking a simple in-memory cache
+// before falling back to the default loader
+// note: if you want to set this loader as the new default, you'll need to
+// store the previous default in another variable first and access that inside
+// the loader
+global $cache;
+$cache = array('http://example.com/mycontext' => (object)array(
+  'hombre' => 'http://schema.org/name'));
+
+function custom_load($url) {
+  global $jsonld_default_load_document, $cache;
+  if(isset($cache[$url])) {
+    // return a "RemoteDocument", it has these three properties:
+    return (object)array(
+      'contextUrl' => null,
+      'document' => $cache[$url],
+      'documentUrl' => $url);
+  }
+  // use default loader
+  return call_user_func($jsonld_default_load_document, $url);
+}
+
+// use the custom loader for just this call, witout modifying the default one
+$compacted = jsonld_compact($foo, 'http://example.com/mycontext', array(
+  'documentLoader' => 'custom_load'));
 ```
 
 Commercial Support
