@@ -3216,6 +3216,9 @@ class JsonLdProcessor {
       $values = $language_map->{$key};
       $values = self::arrayify($values);
       foreach($values as $item) {
+        if($item === null) {
+          continue;
+        }
         if(!is_string($item)) {
           throw new JsonLdException(
             'Invalid JSON-LD syntax; language map values must be strings.',
