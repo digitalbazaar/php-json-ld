@@ -3,6 +3,7 @@ php:
   - 5.5
   - 5.4
   - 5.3
+root: false
 # download test suite and run tests... submodule? meta testing project with
 # all of the reference implementations?
 script: 
