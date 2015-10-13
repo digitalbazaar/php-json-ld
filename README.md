@@ -171,14 +171,16 @@ This library includes a sample testing utility which may be used to verify
 that changes to the processor maintain the correct output.
 
 To run the sample tests you will need to get the test suite files by cloning
-the [json-ld.org repository][json-ld.org] hosted on GitHub:
+the `json-ld.org` and `normalization` repositories hosted on GitHub:
 
-https://github.com/json-ld/json-ld.org
+- https://github.com/json-ld/json-ld.org
+- https://github.com/json-ld/normalization
 
-Then run the PHPUnit test.php application and point it at the directory
-containing the tests.
+Then run the PHPUnit test.php application and point it at the directories
+containing the tests:
 
     phpunit test.php -d {PATH_TO_JSON_LD_ORG/test-suite}
+    phpunit test.php -d {PATH_TO_NORMALIZATION/tests}
 
 [Digital Bazaar]: http://digitalbazaar.com/
 [JSON-LD]: http://json-ld.org/
@@ -187,4 +189,3 @@ containing the tests.
 [PHP]: http://php.net
 [RDFa]: http://www.w3.org/TR/rdfa-core/
 [RFC7159]: http://tools.ietf.org/html/rfc7159
-[json-ld.org]: https://github.com/json-ld/json-ld.org

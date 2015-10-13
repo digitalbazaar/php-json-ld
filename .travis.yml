@@ -1,15 +1,17 @@
 language: php
 php:
-  - 5.6
-  - 5.5
-  - 5.4
   - 5.3
-root: false
+  - 5.4
+  - 5.5
+  - 5.6
+sudo: false
 # download test suite and run tests... submodule? meta testing project with
 # all of the reference implementations?
 script: 
-  - git clone https://github.com/json-ld/json-ld.org.git spec
-  - phpunit test.php -d spec/test-suite
+  - git clone https://github.com/json-ld/json-ld.org.git _json-ld.org
+  - phpunit test.php -d ./_json-ld.org/test-suite
+  - git clone https://github.com/json-ld/normalization.git _normalization
+  - phpunit test.php -d ./_normalization/tests
 notifications:
   email:
     on_success: change
