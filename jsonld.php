@@ -131,12 +131,15 @@ function jsonld_link($input, $ctx, $options) {
 };
 
 /**
- * Performs RDF dataset normalization on the given JSON-LD input. The output
- * is an RDF dataset unless the 'format' option is used.
+ * Performs RDF dataset normalization on the given input. The input is
+ * JSON-LD unless the 'inputFormat' option is used. The output is an RDF
+ * dataset unless the 'format' option is used.
  *
  * @param mixed $input the JSON-LD object to normalize.
  * @param assoc [$options] the options to use:
  *          [base] the base IRI to use.
+ *          [intputFormat] the format if input is not JSON-LD:
+ *            'application/nquads' for N-Quads.
  *          [format] the format if output is a string:
  *            'application/nquads' for N-Quads.
  *          [documentLoader(url)] the document loader.
@@ -1229,6 +1232,8 @@ class JsonLdProcessor {
    * @param assoc $options the options to use:
    *          [base] the base IRI to use.
    *          [expandContext] a context to expand with.
+   *          [inputFormat] the format if input is not JSON-LD:
+   *            'application/nquads' for N-Quads.
    *          [format] the format if output is a string:
    *            'application/nquads' for N-Quads.
    *          [documentLoader(url)] the document loader.
@@ -1241,18 +1246,26 @@ class JsonLdProcessor {
       'base' => is_string($input) ? $input : '',
       'documentLoader' => $jsonld_default_load_document));
 
-    try {
-      // convert to RDF dataset then do normalization
-      $opts = $options;
-      if(isset($opts['format'])) {
-        unset($opts['format']);
+    if(isset($options['inputFormat'])) {
+      if($options['inputFormat'] != 'application/nquads') {
+         throw new JsonLdException(
+           'Unknown normalization input format.', 'jsonld.NormalizeError');
       }
-      $opts['produceGeneralizedRdf'] = false;
-      $dataset = $this->toRDF($input, $opts);
-    } catch(Exception $e) {
-      throw new JsonLdException(
-        'Could not convert input to RDF dataset before normalization.',
-        'jsonld.NormalizeError', null, null, $e);
+      $dataset = $this->parseNQuads($input);
+    } else {
+      try {
+        // convert to RDF dataset then do normalization
+        $opts = $options;
+        if(isset($opts['format'])) {
+          unset($opts['format']);
+        }
+        $opts['produceGeneralizedRdf'] = false;
+        $dataset = $this->toRDF($input, $opts);
+      } catch(Exception $e) {
+        throw new JsonLdException(
+          'Could not convert input to RDF dataset before normalization.',
+          'jsonld.NormalizeError', null, null, $e);
+      }
     }
 
     // do normalization
