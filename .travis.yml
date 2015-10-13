@@ -9,9 +9,9 @@ sudo: false
 # all of the reference implementations?
 script: 
   - git clone https://github.com/json-ld/json-ld.org.git _json-ld.org
-  - phpunit test.php -d ./_json-ld.org/test-suite
+  - phpunit --group json-ld.org test.php -d ./_json-ld.org/test-suite
   - git clone https://github.com/json-ld/normalization.git _normalization
-  - phpunit test.php -d ./_normalization/tests
+  - phpunit --group normalization test.php -d ./_normalization/tests
 notifications:
   email:
     on_success: change

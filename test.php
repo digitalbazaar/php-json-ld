@@ -28,6 +28,7 @@ class JsonLdTestCase extends PHPUnit_Framework_TestCase {
    * @param JsonLdTest $test the test to run.
    *
    * @group expand
+   * @group json-ld.org
    * @dataProvider expandProvider
    */
   public function testExpand($test) {
@@ -43,6 +44,7 @@ class JsonLdTestCase extends PHPUnit_Framework_TestCase {
    * @param JsonLdTest $test the test to run.
    *
    * @group compact
+   * @group json-ld.org
    * @dataProvider compactProvider
    */
   public function testCompact($test) {
@@ -59,6 +61,7 @@ class JsonLdTestCase extends PHPUnit_Framework_TestCase {
    * @param JsonLdTest $test the test to run.
    *
    * @group flatten
+   * @group json-ld.org
    * @dataProvider flattenProvider
    */
   public function testFlatten($test) {
@@ -75,6 +78,7 @@ class JsonLdTestCase extends PHPUnit_Framework_TestCase {
    * @param JsonLdTest $test the test to run.
    *
    * @group toRdf
+   * @group json-ld.org
    * @dataProvider toRdfProvider
    */
   public function testToRdf($test) {
@@ -90,6 +94,7 @@ class JsonLdTestCase extends PHPUnit_Framework_TestCase {
    * @param JsonLdTest $test the test to run.
    *
    * @group fromRdf
+   * @group json-ld.org
    * @dataProvider fromRdfProvider
    */
   public function testFromRdf($test) {
@@ -105,6 +110,7 @@ class JsonLdTestCase extends PHPUnit_Framework_TestCase {
    * @param JsonLdTest $test the test to run.
    *
    * @group frame
+   * @group json-ld.org
    * @dataProvider frameProvider
    */
   public function testFrame($test) {
@@ -121,6 +127,7 @@ class JsonLdTestCase extends PHPUnit_Framework_TestCase {
    * @param JsonLdTest $test the test to run.
    *
    * @group normalize
+   * @group json-ld.org
    * @dataProvider normalizeProvider
    */
   public function testNormalize($test) {
@@ -136,6 +143,7 @@ class JsonLdTestCase extends PHPUnit_Framework_TestCase {
    * @param JsonLdTest $test the test to run.
    *
    * @group normalize
+   * @group normalization
    * @dataProvider urgna2012Provider
    */
   public function testUrgna2012($test) {
@@ -154,6 +162,7 @@ class JsonLdTestCase extends PHPUnit_Framework_TestCase {
    * @param JsonLdTest $test the test to run.
    *
    * @group normalize
+   * @group normalization
    * @dataProvider urdna2015Provider
    */
   public function testUrdna2015($test) {

@@ -179,8 +179,8 @@ the `json-ld.org` and `normalization` repositories hosted on GitHub:
 Then run the PHPUnit test.php application and point it at the directories
 containing the tests:
 
-    phpunit test.php -d {PATH_TO_JSON_LD_ORG/test-suite}
-    phpunit test.php -d {PATH_TO_NORMALIZATION/tests}
+    phpunit --group json-ld.org test.php -d {PATH_TO_JSON_LD_ORG/test-suite}
+    phpunit --group normalization test.php -d {PATH_TO_NORMALIZATION/tests}
 
 [Digital Bazaar]: http://digitalbazaar.com/
 [JSON-LD]: http://json-ld.org/
