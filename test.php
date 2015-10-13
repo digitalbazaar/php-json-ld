@@ -650,7 +650,6 @@ class EarlReport extends PHPUnit_Util_Printer
       } else {
         $name = 'UNNAMED';
       }
-      // FIXME
       printf("\n\nFAILED\n");
       printf("Test: %s\n", $name);
       printf("Purpose: %s\n", $test->test->data->purpose);
