@@ -10,8 +10,8 @@ sudo: false
 script: 
   - git clone https://github.com/json-ld/json-ld.org.git _json-ld.org
   - phpunit --group json-ld.org test.php -d ./_json-ld.org/test-suite
-  - git clone https://github.com/json-ld/normalization.git _normalization
-  - phpunit --group normalization test.php -d ./_normalization/tests
+  #- git clone https://github.com/json-ld/normalization.git _normalization
+  #- phpunit --group normalization test.php -d ./_normalization/tests
 notifications:
   email:
     on_success: change
