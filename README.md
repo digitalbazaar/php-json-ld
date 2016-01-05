@@ -94,10 +94,12 @@ $flattened = jsonld_flatten($doc);
 $framed = jsonld_frame($doc, $frame);
 // document transformed into a particular tree structure per the given frame
 
-// normalize a document
-$normalized = jsonld_normalize($doc, array('format' => 'application/nquads'));
+// normalize a document using the RDF Dataset Normalization Algorithm
+// (URDNA2015), see: http://json-ld.github.io/normalization/spec/
+$normalized = jsonld_normalize(
+  $doc, array('algorithm' => 'URDNA2015', 'format' => 'application/nquads'));
 // normalized is a string that is a canonical representation of the document
-// that can be used for hashing
+// that can be used for hashing, comparison, etc.
 
 // force HTTPS-only context loading:
 // use built-in secure document loader
