@@ -4698,7 +4698,7 @@ class JsonLdProcessor {
     $choice = null;
     foreach($active_ctx->mappings as $term => $definition) {
       // skip terms with colons, they can't be prefixes
-      if(strpos($term, ':') !== false) {
+      if($definition && $definition->_term_has_colon) {
         continue;
       }
       // skip entries with @ids that are not partial matches
@@ -4878,7 +4878,7 @@ class JsonLdProcessor {
 
     // clear context entry
     if($value === null || (is_object($value) &&
-        self::_hasKeyValue($value, '@id', null))) {
+      self::_hasKeyValue($value, '@id', null))) {
       $active_ctx->mappings->{$term} = null;
       $defined->{$term} = true;
       return;
@@ -4952,10 +4952,14 @@ class JsonLdProcessor {
       }
     }
 
+    // always compute whether term has a colon as an optimization for
+    // _compactIri
+    $colon = strpos($term, ':');
+    $mapping->_term_has_colon = ($colon !== false);
+
     if(!property_exists($mapping, '@id')) {
       // see if the term has a prefix
-      $colon = strpos($term, ':');
-      if($colon !== false) {
+      if($mapping->_term_has_colon) {
         $prefix = substr($term, 0, $colon);
         if(property_exists($local_ctx, $prefix)) {
           // define parent prefix
