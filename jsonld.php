@@ -4569,16 +4569,22 @@ class JsonLdProcessor {
       return $iri;
     }
 
-    // term is a keyword, default vocab to true
+    $inverse_ctx = $this->_getInverseContext($active_ctx);
+
     if(self::_isKeyword($iri)) {
-      $relative_to['vocab'] = true;
-    } else if(!isset($relative_to['vocab'])) {
+      // a keyword can only be compacted to simple alias
+      if(property_exists($inverse_ctx, $iri)) {
+        return $inverse_ctx->$iri->{'@none'}->{'@type'}->{'@none'};
+      }
+      return $iri;
+    }
+
+    if(!isset($relative_to['vocab'])) {
       $relative_to['vocab'] = false;
     }
 
     // use inverse context to pick a term if iri is relative to vocab
-    if($relative_to['vocab'] &&
-      property_exists($this->_getInverseContext($active_ctx), $iri)) {
+    if($relative_to['vocab'] && property_exists($inverse_ctx, $iri)) {
       $default_language = '@none';
       if(property_exists($active_ctx, '@language')) {
         $default_language = $active_ctx->{'@language'};
