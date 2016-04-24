@@ -4714,8 +4714,7 @@ class JsonLdProcessor {
       //   the mapping matches the IRI)
       $curie = $term . ':' . substr($iri, $definition->_id_length);
       $is_usable_curie = (!property_exists($active_ctx->mappings, $curie) ||
-        ($value === null && $active_ctx->mappings->{$curie} &&
-        $active_ctx->mappings->{$curie}->{'@id'} === $iri));
+        ($value === null && $active_ctx->mappings->{$curie}->{'@id'} === $iri));
 
       // select curie if it is shorter or the same length but lexicographically
       // less than the current choice
