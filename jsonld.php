@@ -4701,32 +4701,41 @@ class JsonLdProcessor {
     }
 
     // no term or @vocab match, check for possible CURIEs
-    $iri_len = strlen($iri);
     $choice = null;
-    foreach($active_ctx->mappings as $term => $definition) {
-      // skip null definitions and terms with colons, they can't be prefixes
-      if($definition === null || $definition->_term_has_colon) {
-        continue;
+    $idx = 0;
+    $partial_matches = array();
+    $iri_map = $active_ctx->fast_curie_map;
+    // check for partial matches of against `iri`, which means look until
+    // iri.length - 1, not full length
+    $max_partial_length = strlen($iri) - 1;
+    for(; $idx < $max_partial_length && isset($iri_map[$iri[$idx]]); ++$idx) {
+      $iri_map = $iri_map[$iri[$idx]];
+      if(isset($iri_map[''])) {
+        $entry = $iri_map[''][0];
+        $entry->iri_length = $idx + 1;
+        $partial_matches[] = $entry;
       }
-      // skip entries with @ids that are not partial matches
-      if(!($iri_len > $definition->_id_length &&
-        strpos($iri, $definition->{'@id'}) === 0)) {
-        continue;
-      }
+    }
+    // check partial matches in reverse order to prefer longest ones first
+    $partial_matches = array_reverse($partial_matches);
+    foreach($partial_matches as $entry) {
+      $terms = $entry->terms;
+      foreach($terms as $term) {
+        // a CURIE is usable if:
+        // 1. it has no mapping, OR
+        // 2. value is null, which means we're not compacting an @value, AND
+        //   the mapping matches the IRI
+        $curie = $term . ':' . substr($iri, $entry->iri_length);
+        $is_usable_curie = (!property_exists($active_ctx->mappings, $curie) ||
+          ($value === null &&
+          $active_ctx->mappings->{$curie}->{'@id'} === $iri));
 
-      // a CURIE is usable if:
-      // 1. it has no mapping, OR
-      // 2. value is null, which means we're not compacting an @value, AND
-      //   the mapping matches the IRI)
-      $curie = $term . ':' . substr($iri, $definition->_id_length);
-      $is_usable_curie = (!property_exists($active_ctx->mappings, $curie) ||
-        ($value === null && $active_ctx->mappings->{$curie}->{'@id'} === $iri));
-
-      // select curie if it is shorter or the same length but lexicographically
-      // less than the current choice
-      if($is_usable_curie && ($choice === null ||
-        self::_compareShortestLeast($curie, $choice) < 0)) {
-        $choice = $curie;
+        // select curie if it is shorter or the same length but
+        // lexicographically less than the current choice
+        if($is_usable_curie && ($choice === null ||
+          self::_compareShortestLeast($curie, $choice) < 0)) {
+          $choice = $curie;
+        }
       }
     }
 
@@ -5363,6 +5372,10 @@ class JsonLdProcessor {
 
     $inverse = $active_ctx->inverse = new stdClass();
 
+    // variables for building fast CURIE map
+    $fast_curie_map = $active_ctx->fast_curie_map = new ArrayObject();
+    $iris_to_terms = array();
+
     // handle default language
     $default_language = '@none';
     if(property_exists($active_ctx, '@language')) {
@@ -5391,9 +5404,25 @@ class JsonLdProcessor {
       $iris = $mapping->{'@id'};
       $iris = self::arrayify($iris);
       foreach($iris as $iri) {
+        $is_keyword = self::_isKeyword($iri);
+
         // initialize container map
         if(!property_exists($inverse, $iri)) {
           $inverse->{$iri} = new stdClass();
+          if(!$is_keyword && !$mapping->_term_has_colon) {
+            // init IRI to term map and fast CURIE map
+            $iris_to_terms[$iri] = new ArrayObject();
+            $iris_to_terms[$iri][] = $term;
+            $fast_curie_entry = (object)array(
+              'iri' => $iri, 'terms' => $iris_to_terms[$iri]);
+            if(!array_key_exists($iri[0], (array)$fast_curie_map)) {
+              $fast_curie_map[$iri[0]] = new ArrayObject();
+            }
+            $fast_curie_map[$iri[0]][] = $fast_curie_entry;
+          }
+        } else if(!$is_keyword && !$mapping->_term_has_colon) {
+          // add IRI to term match
+          $iris_to_terms[$iri][] = $term;
         }
         $container_map = $inverse->{$iri};
 
@@ -5437,7 +5466,45 @@ class JsonLdProcessor {
       }
     }
 
+    // build fast CURIE map
+    foreach($fast_curie_map as $key => $value) {
+      $this->_buildIriMap($fast_curie_map, $key, 1);
+    }
+
     return $inverse;
+  }
+
+  /**
+   * Runs a recursive algorithm to build a lookup map for quickly finding
+   * potential CURIEs.
+   *
+   * @param ArrayObject $iri_map the map to build.
+   * @param string $key the current key in the map to work on.
+   * @param int $idx the index into the IRI to compare.
+   */
+  function _buildIriMap($iri_map, $key, $idx) {
+    $entries = $iri_map[$key];
+    $next = $iri_map[$key] = new ArrayObject();
+
+    foreach($entries as $entry) {
+      $iri = $entry->iri;
+      if($idx >= strlen($iri)) {
+        $letter = '';
+      } else {
+        $letter = $iri[$idx];
+      }
+      if(!isset($next[$letter])) {
+        $next[$letter] = new ArrayObject();
+      }
+      $next[$letter][] = $entry;
+    }
+
+    foreach($next as $key => $value) {
+      if($key === '') {
+        continue;
+      }
+      $this->_buildIriMap($next, $key, $idx + 1);
+    }
   }
 
   /**
