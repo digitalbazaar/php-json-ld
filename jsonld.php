@@ -5979,6 +5979,10 @@ class Permutator {
  * the overhead of recomputing them.
  */
 class ActiveContextCache {
+  protected $order = [];
+  protected $cache;
+  protected $size;
+
   /**
    * Constructs a new ActiveContextCache.
    *
